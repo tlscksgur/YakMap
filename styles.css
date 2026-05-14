@@ -242,6 +242,10 @@ h1 {
   outline: none;
 }
 
+.field input[type="file"] {
+  padding: 10px 12px;
+}
+
 .field textarea {
   min-height: 104px;
   resize: vertical;
@@ -426,6 +430,16 @@ h1 {
   border: 1px solid #ead4c5;
 }
 
+.kakao-map {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.map-pin {
+  z-index: 1;
+}
+
 .map-pin {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -460,6 +474,42 @@ h1 {
 .profile-grid {
   display: grid;
   gap: 12px;
+}
+
+.api-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.api-status-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdfb;
+  min-height: 54px;
+  padding: 9px 10px;
+}
+
+.api-status-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 800;
+}
+
+.api-status-item strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.84rem;
+}
+
+.api-status-item strong.ok {
+  color: #247b6a;
+}
+
+.api-status-item strong.fallback {
+  color: #a36b00;
 }
 
 .token-box {

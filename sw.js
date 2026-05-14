@@ -30,3 +30,27 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : "" };
+  }
+  const title = payload.notification?.title || payload.title || "약-맵 복약 알림";
+  const body = payload.notification?.body || payload.body || "복용 시간을 확인하세요.";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "./assest/img/erd.webp",
+      badge: "./assest/img/erd.webp",
+      data: payload.data || {}
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.openWindow("./index.html"));
+});

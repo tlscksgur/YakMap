@@ -11,24 +11,34 @@ FIREBASE_API_KEY=
 FIREBASE_PROJECT_ID=
 FIREBASE_MESSAGING_SENDER_ID=
 FIREBASE_APP_ID=
+FIREBASE_VAPID_KEY=
 KAKAO_MAP_JAVASCRIPT_KEY=
 GOOGLE_VISION_API_KEY=
 MFDS_EYAK_SERVICE_KEY=
 NMC_PHARMACY_SERVICE_KEY=
+PUBLIC_DATA_SERVICE_KEY=
 ```
 
 ## Replacement map
 
 | Current file/function | Production replacement |
 | --- | --- |
-| `app.js` `medicineCache` | Supabase `medicine_cache` + 식약처 e약은요 API fallback |
-| `app.js` `lookupMedicine()` | 캐시 조회 후 미스 시 공공 API 호출, 결과 upsert |
-| `app.js` `stores` | 국립중앙의료원 약국 API + 상비약 판매처 마스터 데이터 |
-| `app.js` `renderMap()` | 카카오맵 SDK 지도, 마커, 길찾기 링크 |
-| `app.js` `authenticate()` | Supabase Auth email signup/signin |
-| `app.js` `refreshFcmToken()` | Firebase Messaging `getToken()` 후 `users.fcm_token` 업데이트 |
-| `app.js` `requestNotificationPermission()` | Firebase Messaging 권한 요청과 토큰 갱신 |
-| `app.js` `checkDueReminders()` | 서버 cron/edge function이 `medication_schedules`를 조회해 FCM 발송 |
+| `server.js` `/api/medicine/search` | 식약처 e약은요 API 호출, 실패 시 샘플 fallback |
+| `server.js` `/api/ocr` | Google Vision `DOCUMENT_TEXT_DETECTION`, 실패 시 샘플 OCR fallback |
+| `server.js` `/api/pharmacies` | 국립중앙의료원 약국 조회 API, 실패 시 샘플 약국/편의점 fallback |
+| `server.js` `/api/hospitals` | 국립중앙의료원 병·의원 찾기 API, 실패 시 샘플 병원 fallback |
+| `app.js` `loadKakaoMapSdk()` | 카카오맵 SDK 지도, 마커, 길찾기 링크 |
+| `app.js` `authenticate()` | `/api/auth/*`를 통해 Supabase Auth 또는 로컬 fallback |
+| `app.js` `refreshFcmToken()` | Firebase Messaging `getToken()` 후 `/api/fcm/register` 호출 |
+| `app.js` `checkDueReminders()` | 로컬 알림 fallback. 운영에서는 서버 cron/edge function이 FCM 발송 |
+
+## Public API references
+
+- 식약처 e약은요: `https://apis.data.go.kr/1471000/DrbEasyDrugInfoService/getDrbEasyDrugList`
+- 국립중앙의료원 약국: `https://apis.data.go.kr/B552657/ErmctInsttInfoInqireService/getParmacyListInfoInqire`
+- 국립중앙의료원 병·의원: `https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire`
+- Google Vision OCR: `https://vision.googleapis.com/v1/images:annotate`
+- 카카오맵 SDK: `https://dapi.kakao.com/v2/maps/sdk.js`
 
 ## Server-side reminder flow
 

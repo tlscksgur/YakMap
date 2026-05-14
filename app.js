@@ -99,13 +99,29 @@ const defaultState = {
   authMode: "login",
   selectedMedicine: null,
   mapFilter: "pharmacy",
+  mapPlaces: [],
+  apiStatus: {},
   ocrText: "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분",
   locationLabel: "현재 위치 확인 전"
 };
 
 let state = loadState();
+let runtimeConfig = {
+  integrations: {
+    supabase: { configured: false },
+    firebase: { configured: false },
+    kakaoMap: { configured: false },
+    googleVision: { configured: false },
+    mfds: { configured: false },
+    nmc: { configured: false }
+  },
+  firebase: null,
+  kakaoMapKey: "",
+  liveApisEnabled: false
+};
 let deferredInstallPrompt = null;
 let reminderInterval = null;
+let serviceWorkerRegistration = null;
 
 const app = document.querySelector("#app");
 
@@ -128,19 +144,29 @@ document.querySelector("#installAppButton").addEventListener("click", async () =
 document.querySelector("#notifyPermissionButton").addEventListener("click", requestNotificationPermission);
 
 document.querySelectorAll(".tab-button").forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     state.selectedTab = button.dataset.tab;
     persist();
+    if (state.selectedTab === "map") await loadStoresForFilter(state.mapFilter);
     render();
   });
 });
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
+  navigator.serviceWorker.register("./sw.js")
+    .then((registration) => {
+      serviceWorkerRegistration = registration;
+    })
+    .catch(() => {});
 }
 
-render();
-startReminderLoop();
+boot();
+
+async function boot() {
+  await loadRuntimeConfig();
+  render();
+  startReminderLoop();
+}
 
 function loadState() {
   try {
@@ -158,6 +184,33 @@ function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+async function loadRuntimeConfig() {
+  try {
+    runtimeConfig = await apiGet("/api/config");
+    state.apiStatus.config = "connected";
+  } catch {
+    state.apiStatus.config = "fallback";
+  }
+  persist();
+}
+
+async function apiGet(path) {
+  const response = await fetch(path, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+async function apiPost(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
 function currentUser() {
   return state.users.find((user) => user.id === state.currentUserId) || null;
 }
@@ -173,6 +226,7 @@ function render() {
   if (!currentUser()) {
     app.innerHTML = renderAuth();
     bindAuthEvents();
+    afterRender();
     return;
   }
 
@@ -185,12 +239,57 @@ function render() {
 
   app.innerHTML = viewMap[state.selectedTab]();
   bindViewEvents();
+  afterRender();
+}
+
+function afterRender() {
+  if (state.selectedTab === "map") {
+    renderLiveKakaoMap().catch(() => {});
+  }
 }
 
 function syncTabs() {
   document.querySelectorAll(".tab-button").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.tab === state.selectedTab);
   });
+}
+
+function renderApiStatus() {
+  const integrations = runtimeConfig.integrations || {};
+  const rows = [
+    ["식약처 e약은요", integrations.mfds?.configured, state.apiStatus.medicine],
+    ["Google Vision OCR", integrations.googleVision?.configured, state.apiStatus.ocr],
+    ["약국/병원 공공 API", integrations.nmc?.configured, state.apiStatus.stores],
+    ["카카오맵", integrations.kakaoMap?.configured, state.apiStatus.kakao],
+    ["Supabase", integrations.supabase?.configured, state.apiStatus.auth],
+    ["Firebase FCM", integrations.firebase?.configured, state.apiStatus.fcm]
+  ];
+
+  return `
+    <section class="card compact-card">
+      <div class="section-heading">
+        <div>
+          <h2>API 연결 상태</h2>
+          <p>키가 있으면 실 API, 없으면 샘플 fallback으로 동작합니다.</p>
+        </div>
+      </div>
+      <div class="api-status-grid">
+        ${rows.map(([name, configured, status]) => `
+          <div class="api-status-item">
+            <span>${name}</span>
+            <strong class="${configured ? "ok" : "fallback"}">${configured ? statusLabel(status) : "키 필요"}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function statusLabel(status) {
+  if (status === "connected" || status === "live") return "연결됨";
+  if (status === "error") return "오류";
+  if (status === "fallback") return "샘플";
+  return "대기";
 }
 
 function renderAuth() {
@@ -237,6 +336,8 @@ function renderHome() {
       </div>
       <span class="badge">${new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}</span>
     </section>
+
+    ${renderApiStatus()}
 
     <section class="metric-grid" aria-label="복약 요약">
       <div class="metric"><strong>${dueToday.length}</strong><span>오늘 약</span></div>
@@ -300,7 +401,8 @@ function renderMeds() {
 }
 
 function renderMap() {
-  const filtered = stores.filter((store) => {
+  const sourceStores = state.mapPlaces.length ? state.mapPlaces : stores;
+  const filtered = sourceStores.filter((store) => {
     if (state.mapFilter === "all") return store.open;
     return store.type === state.mapFilter && store.open;
   });
@@ -323,8 +425,10 @@ function renderMap() {
         ${filterButton("all", "전체 영업중")}
       </div>
       <div class="map-panel" aria-label="주변 판매처 지도">
+        <div id="kakaoMap" class="kakao-map"></div>
         ${filtered.map(renderPin).join("")}
       </div>
+      <button class="primary-button" type="button" id="refreshStoresButton" style="margin-top: 12px;">실시간 판매처 불러오기</button>
     </section>
     <section class="store-list">
       ${filtered.map(renderStore).join("") || `<div class="card empty-state">현재 조건에 맞는 판매처가 없습니다.</div>`}
@@ -341,6 +445,7 @@ function renderProfile() {
         <p>계정, FCM 토큰, API 연결 상태입니다.</p>
       </div>
     </section>
+    ${renderApiStatus()}
     <section class="card profile-grid">
       <div>
         <p class="muted">이메일</p>
@@ -387,6 +492,10 @@ function renderOcrPanel() {
   return `
     <div class="scan-drop">
       <div class="field">
+        <label for="ocrImage">약 봉투/처방전 이미지</label>
+        <input id="ocrImage" type="file" accept="image/*" />
+      </div>
+      <div class="field">
         <label for="ocrText">추출된 텍스트</label>
         <textarea id="ocrText" placeholder="약 봉투 OCR 결과를 입력하거나 샘플을 사용하세요.">${escapeHtml(state.ocrText)}</textarea>
       </div>
@@ -421,7 +530,14 @@ function renderMedicineResult(medicine) {
 }
 
 function renderScheduleForm(prefill = "") {
-  const medicineOptions = medicineCache
+  const options = [...medicineCache];
+  if (prefill && !options.some((medicine) => medicine.item_name === prefill)) {
+    options.unshift({
+      item_name: prefill,
+      category: state.selectedMedicine?.category || "확인 필요"
+    });
+  }
+  const medicineOptions = options
     .map((medicine) => `<option value="${medicine.item_name}" ${medicine.item_name === prefill ? "selected" : ""}>${medicine.item_name}</option>`)
     .join("");
 
@@ -520,6 +636,75 @@ function renderStore(store) {
   `;
 }
 
+async function loadStoresForFilter(filter) {
+  try {
+    const params = "region1=서울특별시&region2=중구";
+    if (filter === "hospital") {
+      const hospitals = await apiGet(`/api/hospitals?${params}`);
+      state.mapPlaces = hospitals.items || [];
+      state.apiStatus.stores = hospitals.source === "nmc" ? "connected" : "fallback";
+      return;
+    }
+
+    if (filter === "pharmacy" || filter === "store" || filter === "all") {
+      const [pharmacies, hospitals] = await Promise.all([
+        apiGet(`/api/pharmacies?${params}`),
+        filter === "all" ? apiGet(`/api/hospitals?${params}`) : Promise.resolve({ items: [] })
+      ]);
+      const places = [...(pharmacies.items || []), ...(hospitals.items || [])];
+      state.mapPlaces = filter === "store" ? places.filter((place) => place.type === "store") : places;
+      state.apiStatus.stores = pharmacies.source === "nmc" || hospitals.source === "nmc" ? "connected" : "fallback";
+    }
+  } catch (error) {
+    state.apiStatus.stores = "error";
+    toast(`판매처 API 오류: ${error.message}`);
+  }
+  persist();
+}
+
+async function loadKakaoMapSdk() {
+  if (!runtimeConfig.kakaoMapKey) return false;
+  if (window.kakao?.maps) return true;
+
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-kakao-map-sdk]");
+    if (existing) {
+      existing.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.dataset.kakaoMapSdk = "true";
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(runtimeConfig.kakaoMapKey)}&libraries=services&autoload=false`;
+    script.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
+    script.addEventListener("error", reject, { once: true });
+    document.head.append(script);
+  });
+}
+
+async function renderLiveKakaoMap() {
+  const mapRoot = document.querySelector("#kakaoMap");
+  if (!mapRoot || !runtimeConfig.integrations?.kakaoMap?.configured) return;
+  const loaded = await loadKakaoMapSdk();
+  if (!loaded) return;
+
+  const places = state.mapPlaces.length ? state.mapPlaces : stores;
+  const center = new window.kakao.maps.LatLng(places[0]?.lat || 37.5665, places[0]?.lng || 126.978);
+  const map = new window.kakao.maps.Map(mapRoot, { center, level: 5 });
+  places.forEach((place) => {
+    if (!place.lat || !place.lng) return;
+    const marker = new window.kakao.maps.Marker({
+      map,
+      position: new window.kakao.maps.LatLng(place.lat, place.lng),
+      title: place.name
+    });
+    const info = new window.kakao.maps.InfoWindow({ content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}</div>` });
+    window.kakao.maps.event.addListener(marker, "click", () => info.open(map, marker));
+  });
+  state.apiStatus.kakao = "connected";
+}
+
 function bindAuthEvents() {
   document.querySelectorAll("[data-auth-mode]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -529,22 +714,22 @@ function bindAuthEvents() {
     });
   });
 
-  document.querySelector("#authForm").addEventListener("submit", (event) => {
+  document.querySelector("#authForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    authenticate(String(form.get("email")), String(form.get("password")));
+    await authenticate(String(form.get("email")), String(form.get("password")));
   });
 
-  document.querySelector("#kakaoMockButton").addEventListener("click", () => {
-    authenticate("kakao-user@yak-map.local", crypto.randomUUID());
+  document.querySelector("#kakaoMockButton").addEventListener("click", async () => {
+    await authenticate("kakao-user@yak-map.local", crypto.randomUUID());
   });
 }
 
 function bindViewEvents() {
-  document.querySelector("#medicineSearchForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#medicineSearchForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const query = document.querySelector("#medicineSearch").value;
-    const medicine = lookupMedicine(query);
+    const medicine = await lookupMedicineRemote(query);
     if (!medicine) {
       toast("의약품 캐시에 없는 이름입니다. 실제 서비스에서는 식약처 API로 조회합니다.");
       return;
@@ -554,13 +739,26 @@ function bindViewEvents() {
     render();
   });
 
-  document.querySelector("#scanOcrButton")?.addEventListener("click", () => {
+  document.querySelector("#scanOcrButton")?.addEventListener("click", async () => {
     state.ocrText = document.querySelector("#ocrText").value;
-    const matches = extractMedicines(state.ocrText);
+    const imageFile = document.querySelector("#ocrImage")?.files?.[0];
+    const imageBase64 = imageFile ? await readFileAsDataUrl(imageFile) : "";
+    let matches = extractMedicines(state.ocrText);
+    try {
+      const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
+      state.apiStatus.ocr = ocr.source === "google-vision" ? "connected" : "fallback";
+      state.ocrText = ocr.text || state.ocrText;
+      matches = ocr.medicines?.length ? ocr.medicines : matches;
+      if (ocr.warning) toast(ocr.warning);
+    } catch (error) {
+      state.apiStatus.ocr = "error";
+      toast(`OCR API 오류: ${error.message}`);
+    }
     const resultRoot = document.querySelector("#ocrResults");
     resultRoot.innerHTML = matches.length
       ? matches.map(renderMedicineResult).join("")
       : `<div class="empty-state">매칭된 약 이름이 없습니다.</div>`;
+    document.querySelector("#ocrText").value = state.ocrText;
     bindMedicineActionEvents(resultRoot);
     persist();
   });
@@ -584,16 +782,17 @@ function bindViewEvents() {
   });
 
   document.querySelectorAll("[data-map-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       state.mapFilter = button.dataset.mapFilter;
       persist();
+      await loadStoresForFilter(state.mapFilter);
       render();
     });
   });
 
   document.querySelectorAll("[data-route]").forEach((button) => {
     button.addEventListener("click", () => {
-      const store = stores.find((item) => item.id === button.dataset.route);
+      const store = [...state.mapPlaces, ...stores].find((item) => item.id === button.dataset.route);
       const url = `https://map.kakao.com/link/search/${encodeURIComponent(store.name)}`;
       window.open(url, "_blank", "noopener,noreferrer");
     });
@@ -601,13 +800,18 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-store-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      const store = stores.find((item) => item.id === button.dataset.storeId);
+      const store = [...state.mapPlaces, ...stores].find((item) => item.id === button.dataset.storeId);
       toast(`${store.name} · ${store.distance}km · ${store.hours}`);
     });
   });
 
   document.querySelector("#locateButton")?.addEventListener("click", locateUser);
-  document.querySelector("#refreshTokenButton")?.addEventListener("click", refreshFcmToken);
+  document.querySelector("#refreshStoresButton")?.addEventListener("click", async () => {
+    await loadStoresForFilter(state.mapFilter);
+    render();
+    toast("판매처 정보를 갱신했습니다.");
+  });
+  document.querySelector("#refreshTokenButton")?.addEventListener("click", () => refreshFcmToken());
   document.querySelector("#logoutButton")?.addEventListener("click", logout);
 }
 
@@ -632,31 +836,46 @@ function bindMedicineActionEvents(root) {
   });
 }
 
-function authenticate(email, password) {
+async function authenticate(email, password) {
   if (!email || !password || password.length < 8) {
     toast("이메일과 8자 이상 비밀번호를 입력하세요.");
     return;
   }
 
+  let remoteUser = null;
+  try {
+    const mode = state.authMode === "signup" ? "signup" : "login";
+    const auth = await apiPost(`/api/auth/${mode}`, { email, password });
+    remoteUser = auth.user;
+    state.apiStatus.auth = auth.source === "supabase" ? "connected" : "fallback";
+  } catch (error) {
+    state.apiStatus.auth = "error";
+    toast(`인증 API 오류: ${error.message}`);
+  }
+
   let user = state.users.find((item) => item.email === email);
+  const userId = remoteUser?.id || user?.id || crypto.randomUUID();
+  const fcmToken = await createFcmToken();
   if (!user) {
     user = {
-      id: crypto.randomUUID(),
+      id: userId,
       email,
-      fcm_token: createFcmToken(),
-      created_at: new Date().toISOString()
+      fcm_token: fcmToken,
+      created_at: remoteUser?.created_at || new Date().toISOString()
     };
     state.users.push(user);
-    toast("인증 메일 발송을 완료했다고 가정합니다.");
   } else {
-    user.fcm_token = createFcmToken();
-    toast("자동 로그인 세션과 FCM 토큰을 갱신했습니다.");
+    user.id = userId;
+    user.fcm_token = fcmToken;
   }
+
+  await registerFcmTokenForUser(user);
 
   state.currentUserId = user.id;
   state.selectedTab = "home";
   persist();
   render();
+  toast(state.authMode === "signup" ? "계정 생성과 토큰 갱신을 처리했습니다." : "로그인하고 FCM 토큰을 갱신했습니다.");
 }
 
 function logout() {
@@ -670,17 +889,50 @@ function logout() {
   toast("로그아웃했고 FCM 토큰을 비활성화했습니다.");
 }
 
-function refreshFcmToken() {
+async function refreshFcmToken() {
   const user = currentUser();
   if (!user) return;
-  user.fcm_token = createFcmToken();
+  user.fcm_token = await createFcmToken();
+  await registerFcmTokenForUser(user);
   persist();
   render();
   toast("FCM 토큰을 새로 발급했습니다.");
 }
 
-function createFcmToken() {
-  return `fcm_${crypto.randomUUID().replaceAll("-", "")}_${Date.now()}`;
+async function createFcmToken() {
+  const firebaseToken = await getBrowserFcmToken();
+  return firebaseToken || `fcm_${crypto.randomUUID().replaceAll("-", "")}_${Date.now()}`;
+}
+
+async function registerFcmTokenForUser(user) {
+  try {
+    const result = await apiPost("/api/fcm/register", { userId: user.id, token: user.fcm_token });
+    state.apiStatus.fcm = result.source === "supabase" ? "connected" : "fallback";
+  } catch {
+    state.apiStatus.fcm = "error";
+  }
+}
+
+async function getBrowserFcmToken() {
+  if (!runtimeConfig.integrations?.firebase?.configured || !("Notification" in window)) return "";
+  if (Notification.permission !== "granted") return "";
+  try {
+    const [{ initializeApp, getApps }, { getMessaging, getToken }] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.12.4/firebase-messaging.js")
+    ]);
+    const firebaseApp = getApps()[0] || initializeApp(runtimeConfig.firebase);
+    const messaging = getMessaging(firebaseApp);
+    const token = await getToken(messaging, {
+      vapidKey: runtimeConfig.firebase.vapidKey,
+      serviceWorkerRegistration
+    });
+    state.apiStatus.fcm = token ? "connected" : "fallback";
+    return token || "";
+  } catch {
+    state.apiStatus.fcm = "error";
+    return "";
+  }
 }
 
 function lookupMedicine(query) {
@@ -689,6 +941,18 @@ function lookupMedicine(query) {
     return normalize(medicine.item_name).includes(normalized)
       || medicine.aliases.some((alias) => normalize(alias).includes(normalized) || normalized.includes(normalize(alias)));
   });
+}
+
+async function lookupMedicineRemote(query) {
+  try {
+    const medicine = await apiGet(`/api/medicine/search?q=${encodeURIComponent(query)}`);
+    state.apiStatus.medicine = medicine.source === "mfds" ? "connected" : "fallback";
+    return medicine;
+  } catch (error) {
+    state.apiStatus.medicine = "error";
+    toast(`의약품 API 오류: ${error.message}`);
+    return lookupMedicine(query);
+  }
 }
 
 function normalize(value) {
@@ -703,10 +967,19 @@ function extractMedicines(text) {
   });
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(reader.error || new Error("파일을 읽을 수 없습니다.")));
+    reader.readAsDataURL(file);
+  });
+}
+
 function handleScheduleSubmit(event) {
   event.preventDefault();
   const medicineName = document.querySelector("#scheduleMedicine").value;
-  const medicine = lookupMedicine(medicineName);
+  const medicine = lookupMedicine(medicineName) || state.selectedMedicine;
   const dosageTimes = document.querySelector("#dosageTimes").value
     .split(",")
     .map((time) => time.trim())
@@ -787,6 +1060,9 @@ async function requestNotificationPermission() {
     return;
   }
   const result = await Notification.requestPermission();
+  if (result === "granted" && currentUser()) {
+    await refreshFcmToken();
+  }
   toast(result === "granted" ? "복약 알림 권한을 허용했습니다." : "알림 권한이 허용되지 않았습니다.");
 }
 

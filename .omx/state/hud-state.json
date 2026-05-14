@@ -1,6 +1,6 @@
 {
-  "last_turn_at": "2026-05-14T01:54:01.238Z",
-  "turn_count": 6,
-  "last_progress_at": "2026-05-14T01:54:01.238Z",
-  "last_agent_output": "구현 완료했습니다. 빈 폴더에서 바로 실행 가능한 정적 PWA 형태로 Yak-Map을 만들었고, 로컬 서버도 켜져 있습니다.\n\n실행 URL: `http://localhost:417"
+  "last_turn_at": "2026-05-14T04:47:58.800Z",
+  "turn_count": 20,
+  "last_progress_at": "2026-05-14T04:47:58.800Z",
+  "last_agent_output": "현재 기준으로는 **약 65%** 정도입니다.\n\n구성별로 보면:\n\n- **프론트 UI/UX:** 85%\n- **복약 스케줄 관리:** 75%\n- **의약품 검색/전문·일반 판별 흐"
 }

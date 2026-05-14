@@ -5,7 +5,7 @@
   "description": "Yak-Map static PWA prototype for medication guidance, schedules, and nearby pharmacy navigation.",
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 4173",
-    "test": "node tests/validate-app.mjs"
+    "start": "node server.js",
+    "test": "node tests/api-contract.test.mjs && node tests/validate-app.mjs"
   }
 }
