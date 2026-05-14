@@ -1,0 +1,17 @@
+{
+  "name": "약-맵 Yak-Map",
+  "short_name": "약-맵",
+  "description": "OCR 약 등록, 복약 알림, 주변 약국/병원 안내 서비스",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#fff7ef",
+  "theme_color": "#ff7b68",
+  "icons": [
+    {
+      "src": "./assest/img/erd.webp",
+      "sizes": "512x512",
+      "type": "image/webp",
+      "purpose": "any"
+    }
+  ]
+}

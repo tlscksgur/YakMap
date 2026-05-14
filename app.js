@@ -1,0 +1,854 @@
+const STORAGE_KEY = "yak-map-state-v1";
+
+const today = new Date().toISOString().slice(0, 10);
+
+const medicineCache = [
+  {
+    item_name: "타이레놀정500mg",
+    aliases: ["타이레놀", "아세트아미노펜"],
+    category: "일반",
+    efficacy: "해열 및 감기, 두통, 치통, 근육통 완화",
+    side_effects: "간 질환이 있거나 음주 후 복용 시 전문가 상담이 필요합니다."
+  },
+  {
+    item_name: "게보린정",
+    aliases: ["게보린"],
+    category: "일반",
+    efficacy: "두통, 치통, 생리통 등 통증 완화",
+    side_effects: "카페인 민감자와 위장 장애가 있는 경우 주의하세요."
+  },
+  {
+    item_name: "아목시실린캡슐",
+    aliases: ["아목시실린", "항생제"],
+    category: "전문",
+    efficacy: "세균 감염 치료에 쓰이는 항생제",
+    side_effects: "처방 없이 임의 복용하거나 중단하지 마세요."
+  },
+  {
+    item_name: "로수바스타틴정",
+    aliases: ["로수바스타틴", "고지혈증약"],
+    category: "전문",
+    efficacy: "콜레스테롤 조절 및 심혈관 위험 감소",
+    side_effects: "근육통, 간 수치 이상이 있으면 진료가 필요합니다."
+  },
+  {
+    item_name: "판콜에이내복액",
+    aliases: ["판콜", "감기약"],
+    category: "일반",
+    efficacy: "감기 증상 완화",
+    side_effects: "졸림이 올 수 있어 운전 전 복용에 주의하세요."
+  }
+];
+
+const stores = [
+  {
+    id: "p1",
+    type: "pharmacy",
+    name: "코랄약국",
+    address: "서울특별시 중구 세종대로 110",
+    phone: "02-123-4567",
+    distance: 0.4,
+    open: true,
+    hours: "08:30-21:30",
+    x: 24,
+    y: 42
+  },
+  {
+    id: "p2",
+    type: "pharmacy",
+    name: "햇살온누리약국",
+    address: "서울특별시 중구 명동길 20",
+    phone: "02-555-0912",
+    distance: 0.9,
+    open: true,
+    hours: "09:00-22:00",
+    x: 63,
+    y: 36
+  },
+  {
+    id: "h1",
+    type: "hospital",
+    name: "피치내과의원",
+    address: "서울특별시 종로구 종로 51",
+    phone: "02-777-2400",
+    distance: 1.3,
+    open: true,
+    hours: "09:00-18:30",
+    x: 44,
+    y: 68
+  },
+  {
+    id: "s1",
+    type: "store",
+    name: "세븐일레븐 시청점",
+    address: "서울특별시 중구 무교로 12",
+    phone: "02-700-1111",
+    distance: 0.7,
+    open: true,
+    hours: "24시간",
+    x: 78,
+    y: 62
+  }
+];
+
+const defaultState = {
+  users: [],
+  currentUserId: null,
+  schedules: [],
+  selectedTab: "home",
+  authMode: "login",
+  selectedMedicine: null,
+  mapFilter: "pharmacy",
+  ocrText: "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분",
+  locationLabel: "현재 위치 확인 전"
+};
+
+let state = loadState();
+let deferredInstallPrompt = null;
+let reminderInterval = null;
+
+const app = document.querySelector("#app");
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
+
+document.querySelector("#installAppButton").addEventListener("click", async () => {
+  if (!deferredInstallPrompt) {
+    toast("브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.");
+    return;
+  }
+
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+});
+
+document.querySelector("#notifyPermissionButton").addEventListener("click", requestNotificationPermission);
+
+document.querySelectorAll(".tab-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.selectedTab = button.dataset.tab;
+    persist();
+    render();
+  });
+});
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+
+render();
+startReminderLoop();
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (saved && typeof saved === "object") {
+      return { ...defaultState, ...saved };
+    }
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+  return structuredClone(defaultState);
+}
+
+function persist() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function currentUser() {
+  return state.users.find((user) => user.id === state.currentUserId) || null;
+}
+
+function userSchedules() {
+  return state.schedules
+    .filter((schedule) => schedule.user_id === state.currentUserId)
+    .sort((a, b) => a.end_date.localeCompare(b.end_date));
+}
+
+function render() {
+  syncTabs();
+  if (!currentUser()) {
+    app.innerHTML = renderAuth();
+    bindAuthEvents();
+    return;
+  }
+
+  const viewMap = {
+    home: renderHome,
+    meds: renderMeds,
+    map: renderMap,
+    profile: renderProfile
+  };
+
+  app.innerHTML = viewMap[state.selectedTab]();
+  bindViewEvents();
+}
+
+function syncTabs() {
+  document.querySelectorAll(".tab-button").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.tab === state.selectedTab);
+  });
+}
+
+function renderAuth() {
+  const isLogin = state.authMode === "login";
+  return `
+    <section class="card auth-panel">
+      <div class="section-heading">
+        <div>
+          <h2>${isLogin ? "로그인" : "회원가입"}</h2>
+          <p>${isLogin ? "세션 유지와 FCM 토큰 갱신을 처리합니다." : "이메일 인증 흐름을 가정한 로컬 가입입니다."}</p>
+        </div>
+      </div>
+      <div class="segmented" role="tablist" aria-label="인증 모드">
+        <button class="${isLogin ? "is-active" : ""}" type="button" data-auth-mode="login">로그인</button>
+        <button class="${!isLogin ? "is-active" : ""}" type="button" data-auth-mode="signup">회원가입</button>
+      </div>
+      <form class="form-grid" id="authForm">
+        <div class="field">
+          <label for="email">이메일</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="yakmap@example.com" required />
+        </div>
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <input id="password" name="password" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="8자 이상" minlength="8" required />
+        </div>
+        <button class="primary-button" type="submit">${isLogin ? "로그인하고 토큰 갱신" : "계정 만들고 인증 메일 발송"}</button>
+        <button class="primary-button kakao-button" type="button" id="kakaoMockButton">카카오로 계속하기</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderHome() {
+  const schedules = userSchedules();
+  const dueToday = schedules.filter((schedule) => isWithinSchedule(schedule, today));
+  const lowStock = schedules.filter((schedule) => schedule.remaining_pills <= schedule.dosage_times.length);
+  const next = nextDose(dueToday);
+
+  return `
+    <section class="section-heading">
+      <div>
+        <h2>오늘의 복약 일정</h2>
+        <p>${next ? `${next.time} · ${next.name}` : "오늘 예정된 복약이 없습니다."}</p>
+      </div>
+      <span class="badge">${new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}</span>
+    </section>
+
+    <section class="metric-grid" aria-label="복약 요약">
+      <div class="metric"><strong>${dueToday.length}</strong><span>오늘 약</span></div>
+      <div class="metric"><strong>${schedules.length}</strong><span>등록 약</span></div>
+      <div class="metric"><strong>${lowStock.length}</strong><span>재구매 필요</span></div>
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>빠른 약 판별</h2>
+          <p>약 이름으로 전문/일반을 확인합니다.</p>
+        </div>
+      </div>
+      ${renderMedicineSearch()}
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>OCR 약 봉투 스캔</h2>
+          <p>촬영 텍스트를 추출했다고 가정하고 자동 매칭합니다.</p>
+        </div>
+      </div>
+      ${renderOcrPanel()}
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>복용 체크</h2>
+          <p>체크하면 남은 알약 수가 차감됩니다.</p>
+        </div>
+      </div>
+      ${renderScheduleList(dueToday, true)}
+    </section>
+  `;
+}
+
+function renderMeds() {
+  return `
+    <section class="section-heading">
+      <div>
+        <h2>내약</h2>
+        <p>복용 주기와 잔여 수량을 관리합니다.</p>
+      </div>
+    </section>
+    <section class="card">
+      ${renderScheduleForm(state.selectedMedicine?.item_name || "")}
+    </section>
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>등록된 스케줄</h2>
+          <p>1일분 이하가 되면 재구매 알림 대상입니다.</p>
+        </div>
+      </div>
+      ${renderScheduleList(userSchedules(), false)}
+    </section>
+  `;
+}
+
+function renderMap() {
+  const filtered = stores.filter((store) => {
+    if (state.mapFilter === "all") return store.open;
+    return store.type === state.mapFilter && store.open;
+  });
+
+  return `
+    <section class="section-heading">
+      <div>
+        <h2>스마트 길찾기</h2>
+        <p>${state.locationLabel}</p>
+      </div>
+      <button class="text-button" type="button" id="locateButton">위치 확인</button>
+    </section>
+    <section class="card">
+      <div class="segmented" role="tablist" aria-label="판매처 필터">
+        ${filterButton("pharmacy", "약국")}
+        ${filterButton("hospital", "병원")}
+      </div>
+      <div class="segmented" role="tablist" aria-label="상비약 필터" style="margin-top: 8px;">
+        ${filterButton("store", "심야 편의점")}
+        ${filterButton("all", "전체 영업중")}
+      </div>
+      <div class="map-panel" aria-label="주변 판매처 지도">
+        ${filtered.map(renderPin).join("")}
+      </div>
+    </section>
+    <section class="store-list">
+      ${filtered.map(renderStore).join("") || `<div class="card empty-state">현재 조건에 맞는 판매처가 없습니다.</div>`}
+    </section>
+  `;
+}
+
+function renderProfile() {
+  const user = currentUser();
+  return `
+    <section class="section-heading">
+      <div>
+        <h2>프로필</h2>
+        <p>계정, FCM 토큰, API 연결 상태입니다.</p>
+      </div>
+    </section>
+    <section class="card profile-grid">
+      <div>
+        <p class="muted">이메일</p>
+        <h3>${escapeHtml(user.email)}</h3>
+      </div>
+      <div>
+        <p class="muted">FCM 토큰</p>
+        <div class="token-box">${escapeHtml(user.fcm_token || "로그인 시 토큰이 없습니다.")}</div>
+      </div>
+      <div class="pill-row">
+        <span class="status-chip badge general">Supabase Auth 준비</span>
+        <span class="status-chip badge">FCM 갱신 흐름 구현</span>
+        <span class="status-chip badge warning">외부 API 키 필요</span>
+      </div>
+      <button class="secondary-button" type="button" id="refreshTokenButton">FCM 토큰 다시 갱신</button>
+      <button class="text-button" type="button" id="logoutButton">로그아웃</button>
+    </section>
+    <section class="card">
+      <h2>데이터 모델</h2>
+      <p class="muted">users, medication_schedules, medicine_cache, safe_store_list 구조를 기준으로 로컬 저장소가 동작합니다.</p>
+      <img src="./assest/img/erd.webp" alt="약-맵 복약 관리 및 알림 서비스 ERD" style="width: 100%; border-radius: 18px; border: 1px solid var(--line);" />
+    </section>
+  `;
+}
+
+function renderMedicineSearch() {
+  const selected = state.selectedMedicine;
+  return `
+    <form class="form-grid" id="medicineSearchForm">
+      <div class="field">
+        <label for="medicineSearch">약 이름</label>
+        <input id="medicineSearch" type="search" placeholder="예: 타이레놀, 아목시실린" list="medicineNames" required />
+        <datalist id="medicineNames">
+          ${medicineCache.map((medicine) => `<option value="${medicine.item_name}"></option>`).join("")}
+        </datalist>
+      </div>
+      <button class="primary-button" type="submit">전문/일반 판별</button>
+    </form>
+    ${selected ? renderMedicineResult(selected) : ""}
+  `;
+}
+
+function renderOcrPanel() {
+  return `
+    <div class="scan-drop">
+      <div class="field">
+        <label for="ocrText">추출된 텍스트</label>
+        <textarea id="ocrText" placeholder="약 봉투 OCR 결과를 입력하거나 샘플을 사용하세요.">${escapeHtml(state.ocrText)}</textarea>
+      </div>
+      <div class="two-col">
+        <button class="secondary-button" type="button" id="useSampleOcrButton">샘플 입력</button>
+        <button class="primary-button" type="button" id="scanOcrButton">약 이름 매칭</button>
+      </div>
+    </div>
+    <div class="result-list" id="ocrResults"></div>
+  `;
+}
+
+function renderMedicineResult(medicine) {
+  const isPrescription = medicine.category === "전문";
+  const target = isPrescription ? "병원 진료 후 처방이 필요합니다." : "주변 영업 중인 약국에서 구매처를 확인하세요.";
+  return `
+    <div class="result-item" style="margin-top: 12px;">
+      <div class="item-top">
+        <div>
+          <h3>${medicine.item_name}</h3>
+          <p>${medicine.efficacy}</p>
+        </div>
+        <span class="badge ${isPrescription ? "prescription" : "general"}">${medicine.category}</span>
+      </div>
+      <p class="muted">${medicine.side_effects}</p>
+      <div class="action-row">
+        <button class="secondary-button" type="button" data-guide="${isPrescription ? "hospital" : "pharmacy"}">${target}</button>
+        <button class="primary-button" type="button" data-add-medicine="${medicine.item_name}">복약 알림 등록</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderScheduleForm(prefill = "") {
+  const medicineOptions = medicineCache
+    .map((medicine) => `<option value="${medicine.item_name}" ${medicine.item_name === prefill ? "selected" : ""}>${medicine.item_name}</option>`)
+    .join("");
+
+  return `
+    <form class="form-grid" id="scheduleForm">
+      <div class="field">
+        <label for="scheduleMedicine">약 이름</label>
+        <select id="scheduleMedicine" required>${medicineOptions}</select>
+      </div>
+      <div class="field">
+        <label for="dosageTimes">복용 시간</label>
+        <input id="dosageTimes" type="text" value="09:00, 13:00, 19:00" placeholder="09:00, 13:00, 19:00" required />
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label for="startDate">시작일</label>
+          <input id="startDate" type="date" value="${today}" required />
+        </div>
+        <div class="field">
+          <label for="durationDays">복용 일수</label>
+          <input id="durationDays" type="number" min="1" value="3" required />
+        </div>
+      </div>
+      <div class="field">
+        <label for="remainingPills">남은 알약 수</label>
+        <input id="remainingPills" type="number" min="1" value="9" required />
+      </div>
+      <button class="primary-button" type="submit">스케줄 등록</button>
+    </form>
+  `;
+}
+
+function renderScheduleList(schedules, allowCheck) {
+  if (!schedules.length) {
+    return `<div class="empty-state">등록된 복약 일정이 없습니다.</div>`;
+  }
+
+  return `
+    <div class="schedule-list">
+      ${schedules.map((schedule) => renderSchedule(schedule, allowCheck)).join("")}
+    </div>
+  `;
+}
+
+function renderSchedule(schedule, allowCheck) {
+  const remainingRatio = Math.max(0, Math.min(100, (schedule.remaining_pills / schedule.initial_pills) * 100));
+  const low = schedule.remaining_pills <= schedule.dosage_times.length;
+  return `
+    <article class="schedule-item">
+      <div class="item-top">
+        <div>
+          <h3>${escapeHtml(schedule.medicine_name)}</h3>
+          <p>${schedule.start_date} ~ ${schedule.end_date}</p>
+        </div>
+        <span class="badge ${schedule.is_prescription ? "prescription" : "general"}">${schedule.is_prescription ? "전문" : "일반"}</span>
+      </div>
+      <div class="medicine-tags">
+        ${schedule.dosage_times.map((time) => `<span class="time-chip badge">${time}</span>`).join("")}
+        ${low ? `<span class="time-chip badge warning">1일분 이하</span>` : ""}
+      </div>
+      <div class="progress" aria-label="잔여 알약 ${schedule.remaining_pills}개">
+        <span style="--value: ${remainingRatio}%"></span>
+      </div>
+      <p class="muted">남은 알약 ${schedule.remaining_pills}개</p>
+      <div class="action-row">
+        ${allowCheck ? `<button class="primary-button" type="button" data-take="${schedule.id}">복용 완료</button>` : ""}
+        <button class="text-button" type="button" data-delete="${schedule.id}">삭제</button>
+      </div>
+    </article>
+  `;
+}
+
+function filterButton(value, label) {
+  return `<button class="${state.mapFilter === value ? "is-active" : ""}" type="button" data-map-filter="${value}">${label}</button>`;
+}
+
+function renderPin(store) {
+  const className = store.type === "hospital" ? "hospital" : store.type === "store" ? "store" : "";
+  return `<button class="map-pin ${className}" style="left: ${store.x}%; top: ${store.y}%;" type="button" data-store-id="${store.id}" aria-label="${store.name}"><span>${store.type === "hospital" ? "H" : store.type === "store" ? "24" : "약"}</span></button>`;
+}
+
+function renderStore(store) {
+  const label = store.type === "hospital" ? "병원" : store.type === "store" ? "상비약 편의점" : "약국";
+  return `
+    <article class="store-item">
+      <div class="item-top">
+        <div>
+          <h3>${store.name}</h3>
+          <p>${store.address}</p>
+        </div>
+        <span class="badge ${store.type === "hospital" ? "prescription" : "general"}">${label}</span>
+      </div>
+      <p class="muted">${store.distance}km · ${store.hours} · ${store.phone}</p>
+      <button class="secondary-button" type="button" data-route="${store.id}">길찾기 앱 열기</button>
+    </article>
+  `;
+}
+
+function bindAuthEvents() {
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.authMode = button.dataset.authMode;
+      persist();
+      render();
+    });
+  });
+
+  document.querySelector("#authForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    authenticate(String(form.get("email")), String(form.get("password")));
+  });
+
+  document.querySelector("#kakaoMockButton").addEventListener("click", () => {
+    authenticate("kakao-user@yak-map.local", crypto.randomUUID());
+  });
+}
+
+function bindViewEvents() {
+  document.querySelector("#medicineSearchForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = document.querySelector("#medicineSearch").value;
+    const medicine = lookupMedicine(query);
+    if (!medicine) {
+      toast("의약품 캐시에 없는 이름입니다. 실제 서비스에서는 식약처 API로 조회합니다.");
+      return;
+    }
+    state.selectedMedicine = medicine;
+    persist();
+    render();
+  });
+
+  document.querySelector("#scanOcrButton")?.addEventListener("click", () => {
+    state.ocrText = document.querySelector("#ocrText").value;
+    const matches = extractMedicines(state.ocrText);
+    const resultRoot = document.querySelector("#ocrResults");
+    resultRoot.innerHTML = matches.length
+      ? matches.map(renderMedicineResult).join("")
+      : `<div class="empty-state">매칭된 약 이름이 없습니다.</div>`;
+    bindMedicineActionEvents(resultRoot);
+    persist();
+  });
+
+  document.querySelector("#useSampleOcrButton")?.addEventListener("click", () => {
+    state.ocrText = "타이레놀정500mg\n판콜에이내복액\n아침 저녁 식후 30분";
+    persist();
+    render();
+  });
+
+  document.querySelector("#scheduleForm")?.addEventListener("submit", handleScheduleSubmit);
+
+  bindMedicineActionEvents(document);
+
+  document.querySelectorAll("[data-take]").forEach((button) => {
+    button.addEventListener("click", () => markDoseTaken(Number(button.dataset.take)));
+  });
+
+  document.querySelectorAll("[data-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteSchedule(Number(button.dataset.delete)));
+  });
+
+  document.querySelectorAll("[data-map-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.mapFilter = button.dataset.mapFilter;
+      persist();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-route]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const store = stores.find((item) => item.id === button.dataset.route);
+      const url = `https://map.kakao.com/link/search/${encodeURIComponent(store.name)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  });
+
+  document.querySelectorAll("[data-store-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const store = stores.find((item) => item.id === button.dataset.storeId);
+      toast(`${store.name} · ${store.distance}km · ${store.hours}`);
+    });
+  });
+
+  document.querySelector("#locateButton")?.addEventListener("click", locateUser);
+  document.querySelector("#refreshTokenButton")?.addEventListener("click", refreshFcmToken);
+  document.querySelector("#logoutButton")?.addEventListener("click", logout);
+}
+
+function bindMedicineActionEvents(root) {
+  root.querySelectorAll("[data-add-medicine]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedTab = "meds";
+      state.selectedMedicine = lookupMedicine(button.dataset.addMedicine);
+      persist();
+      render();
+      toast("내약 탭에서 복용 시간과 일수를 확인한 뒤 등록하세요.");
+    });
+  });
+
+  root.querySelectorAll("[data-guide]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedTab = "map";
+      state.mapFilter = button.dataset.guide;
+      persist();
+      render();
+    });
+  });
+}
+
+function authenticate(email, password) {
+  if (!email || !password || password.length < 8) {
+    toast("이메일과 8자 이상 비밀번호를 입력하세요.");
+    return;
+  }
+
+  let user = state.users.find((item) => item.email === email);
+  if (!user) {
+    user = {
+      id: crypto.randomUUID(),
+      email,
+      fcm_token: createFcmToken(),
+      created_at: new Date().toISOString()
+    };
+    state.users.push(user);
+    toast("인증 메일 발송을 완료했다고 가정합니다.");
+  } else {
+    user.fcm_token = createFcmToken();
+    toast("자동 로그인 세션과 FCM 토큰을 갱신했습니다.");
+  }
+
+  state.currentUserId = user.id;
+  state.selectedTab = "home";
+  persist();
+  render();
+}
+
+function logout() {
+  const user = currentUser();
+  if (user) user.fcm_token = "";
+  state.currentUserId = null;
+  state.selectedMedicine = null;
+  state.selectedTab = "home";
+  persist();
+  render();
+  toast("로그아웃했고 FCM 토큰을 비활성화했습니다.");
+}
+
+function refreshFcmToken() {
+  const user = currentUser();
+  if (!user) return;
+  user.fcm_token = createFcmToken();
+  persist();
+  render();
+  toast("FCM 토큰을 새로 발급했습니다.");
+}
+
+function createFcmToken() {
+  return `fcm_${crypto.randomUUID().replaceAll("-", "")}_${Date.now()}`;
+}
+
+function lookupMedicine(query) {
+  const normalized = normalize(query);
+  return medicineCache.find((medicine) => {
+    return normalize(medicine.item_name).includes(normalized)
+      || medicine.aliases.some((alias) => normalize(alias).includes(normalized) || normalized.includes(normalize(alias)));
+  });
+}
+
+function normalize(value) {
+  return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
+function extractMedicines(text) {
+  const normalizedText = normalize(text);
+  return medicineCache.filter((medicine) => {
+    return normalizedText.includes(normalize(medicine.item_name))
+      || medicine.aliases.some((alias) => normalizedText.includes(normalize(alias)));
+  });
+}
+
+function handleScheduleSubmit(event) {
+  event.preventDefault();
+  const medicineName = document.querySelector("#scheduleMedicine").value;
+  const medicine = lookupMedicine(medicineName);
+  const dosageTimes = document.querySelector("#dosageTimes").value
+    .split(",")
+    .map((time) => time.trim())
+    .filter(Boolean);
+  const startDate = document.querySelector("#startDate").value;
+  const durationDays = Number(document.querySelector("#durationDays").value);
+  const remainingPills = Number(document.querySelector("#remainingPills").value);
+
+  if (!medicine || dosageTimes.length === 0 || !startDate || durationDays < 1 || remainingPills < 1) {
+    toast("스케줄 값을 다시 확인하세요.");
+    return;
+  }
+
+  state.schedules.push({
+    id: Date.now(),
+    user_id: state.currentUserId,
+    medicine_name: medicine.item_name,
+    is_prescription: medicine.category === "전문",
+    dosage_times: dosageTimes,
+    start_date: startDate,
+    end_date: addDays(startDate, durationDays - 1),
+    remaining_pills: remainingPills,
+    initial_pills: remainingPills,
+    last_notified_at: ""
+  });
+  persist();
+  render();
+  toast("복약 스케줄을 등록했습니다.");
+}
+
+function markDoseTaken(id) {
+  const schedule = state.schedules.find((item) => item.id === id);
+  if (!schedule) return;
+  schedule.remaining_pills = Math.max(0, schedule.remaining_pills - 1);
+  persist();
+  render();
+  toast(schedule.remaining_pills <= schedule.dosage_times.length ? "복용 완료. 1일분 이하라 재구매가 필요합니다." : "복용 완료 처리했습니다.");
+}
+
+function deleteSchedule(id) {
+  state.schedules = state.schedules.filter((item) => item.id !== id);
+  persist();
+  render();
+  toast("스케줄을 삭제했습니다.");
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function isWithinSchedule(schedule, date) {
+  return schedule.start_date <= date && date <= schedule.end_date && schedule.remaining_pills > 0;
+}
+
+function nextDose(schedules) {
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const candidates = schedules.flatMap((schedule) => {
+    return schedule.dosage_times.map((time) => ({
+      name: schedule.medicine_name,
+      time,
+      minutes: toMinutes(time)
+    }));
+  });
+  return candidates.find((dose) => dose.minutes >= currentMinutes) || candidates[0] || null;
+}
+
+function toMinutes(time) {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) {
+    toast("이 브라우저는 알림을 지원하지 않습니다.");
+    return;
+  }
+  const result = await Notification.requestPermission();
+  toast(result === "granted" ? "복약 알림 권한을 허용했습니다." : "알림 권한이 허용되지 않았습니다.");
+}
+
+function startReminderLoop() {
+  clearInterval(reminderInterval);
+  reminderInterval = setInterval(checkDueReminders, 30_000);
+  checkDueReminders();
+}
+
+function checkDueReminders() {
+  if (!currentUser() || !("Notification" in window) || Notification.permission !== "granted") return;
+  const now = new Date();
+  const hhmm = now.toTimeString().slice(0, 5);
+  userSchedules().forEach((schedule) => {
+    if (!isWithinSchedule(schedule, today)) return;
+    const key = `${today}-${hhmm}`;
+    if (schedule.dosage_times.includes(hhmm) && schedule.last_notified_at !== key) {
+      schedule.last_notified_at = key;
+      persist();
+      new Notification("약-맵 복약 알림", {
+        body: `${schedule.medicine_name} 복용 시간입니다.`,
+        icon: "./assest/img/erd.webp"
+      });
+    }
+  });
+}
+
+function locateUser() {
+  if (!navigator.geolocation) {
+    state.locationLabel = "위치 기능을 지원하지 않는 브라우저입니다.";
+    persist();
+    render();
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      state.locationLabel = `현재 위치 ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
+      persist();
+      render();
+    },
+    () => {
+      state.locationLabel = "위치 권한이 없어 샘플 위치를 사용합니다.";
+      persist();
+      render();
+    },
+    { enableHighAccuracy: true, timeout: 5000 }
+  );
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function toast(message) {
+  const template = document.querySelector("#toastTemplate");
+  const node = template.content.firstElementChild.cloneNode(true);
+  node.textContent = message;
+  document.body.append(node);
+  setTimeout(() => node.remove(), 2600);
+}
