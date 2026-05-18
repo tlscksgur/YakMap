@@ -1,6 +1,6 @@
 {
-  "last_turn_at": "2026-05-18T00:55:22.884Z",
-  "turn_count": 23,
-  "last_progress_at": "2026-05-18T00:55:22.884Z",
-  "last_agent_output": "구현 완료했습니다.\n\n핵심 변경:\n- [app.js](/Users/sinchanhyuk/Desktop/YakMap/app.js:213)에서 `render()` 실행 시 로그인 상태"
+  "last_turn_at": "2026-05-18T00:59:49.436Z",
+  "turn_count": 25,
+  "last_progress_at": "2026-05-18T00:59:49.436Z",
+  "last_agent_output": "거의 맞는데, **“키만 넣으면 바로 100% 끝”은 아니고 “마지막 실연동/검증 단계만 남은 상태”**가 정확합니다.\n\nAPI 키가 있으면 끝낼 수 있는 것:\n- 실제 OCR 작"
 }
