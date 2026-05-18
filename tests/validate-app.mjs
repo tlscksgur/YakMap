@@ -19,7 +19,9 @@ const contents = Object.fromEntries(
 const assertions = [
   ["index links stylesheet", contents["index.html"].includes('href="./styles.css"')],
   ["index loads app module", contents["index.html"].includes('src="./app.js"')],
+  ["index initializes tabbar hidden", contents["index.html"].includes('id="appTabbar"') && contents["index.html"].includes("hidden")],
   ["app has auth token refresh", contents["app.js"].includes("refreshFcmToken")],
+  ["app toggles tabbar hidden state", contents["app.js"].includes("appTabbar.hidden = !user")],
   ["app calls runtime config API", contents["app.js"].includes("/api/config")],
   ["app calls medicine API", contents["app.js"].includes("/api/medicine/search")],
   ["app calls OCR API", contents["app.js"].includes("/api/ocr")],

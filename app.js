@@ -124,24 +124,13 @@ let reminderInterval = null;
 let serviceWorkerRegistration = null;
 
 const app = document.querySelector("#app");
+const appHero = document.querySelector("#appHero");
+const appTabbar = document.querySelector("#appTabbar");
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   deferredInstallPrompt = event;
 });
-
-document.querySelector("#installAppButton").addEventListener("click", async () => {
-  if (!deferredInstallPrompt) {
-    toast("브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.");
-    return;
-  }
-
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice;
-  deferredInstallPrompt = null;
-});
-
-document.querySelector("#notifyPermissionButton").addEventListener("click", requestNotificationPermission);
 
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", async () => {
@@ -222,8 +211,20 @@ function userSchedules() {
 }
 
 function render() {
+  const user = currentUser();
+  appTabbar.hidden = !user;
   syncTabs();
-  if (!currentUser()) {
+  
+  if (user) {
+    document.body.classList.add("is-logged-in");
+  } else {
+    document.body.classList.remove("is-logged-in");
+  }
+
+  appHero.innerHTML = renderHero(user);
+  
+  if (!user) {
+    bindUtilityEvents();
     app.innerHTML = renderAuth();
     bindAuthEvents();
     afterRender();
@@ -240,6 +241,59 @@ function render() {
   app.innerHTML = viewMap[state.selectedTab]();
   bindViewEvents();
   afterRender();
+}
+
+function renderHero(user) {
+  if (!user) {
+    return `
+      <div class="hero-top">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span>
+        </div>
+        <div>
+          <p class="eyebrow">Yak-Map</p>
+          <h1>약-맵</h1>
+          <p class="hero-copy">복약 등록부터 구매처 안내까지 한 번에 관리하세요.</p>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <button class="ghost-button" id="installAppButton" type="button">앱 설치</button>
+        <button class="ghost-button" id="notifyPermissionButton" type="button">알림 허용</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="hero-top">
+      <div class="brand-mark mini" aria-hidden="true">
+        <span></span>
+      </div>
+      <div class="user-info">
+        <p class="eyebrow">환영합니다!</p>
+        <h2>${escapeHtml(user.email.split("@")[0])}님</h2>
+      </div>
+    </div>
+  `;
+}
+
+function bindUtilityEvents() {
+  const installBtn = document.querySelector("#installAppButton");
+  if (installBtn) {
+    installBtn.addEventListener("click", async () => {
+      if (!deferredInstallPrompt) {
+        toast("브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.");
+        return;
+      }
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+    });
+  }
+
+  const notifyBtn = document.querySelector("#notifyPermissionButton");
+  if (notifyBtn) {
+    notifyBtn.addEventListener("click", requestNotificationPermission);
+  }
 }
 
 function afterRender() {
@@ -445,6 +499,14 @@ function renderProfile() {
         <p>계정, FCM 토큰, API 연결 상태입니다.</p>
       </div>
     </section>
+    
+    <section class="card profile-grid">
+      <div class="two-col">
+        <button class="secondary-button" id="installAppButton" type="button">앱 설치</button>
+        <button class="secondary-button" id="notifyPermissionButton" type="button">알림 허용</button>
+      </div>
+    </section>
+
     ${renderApiStatus()}
     <section class="card profile-grid">
       <div>
@@ -813,6 +875,8 @@ function bindViewEvents() {
   });
   document.querySelector("#refreshTokenButton")?.addEventListener("click", () => refreshFcmToken());
   document.querySelector("#logoutButton")?.addEventListener("click", logout);
+
+  bindUtilityEvents();
 }
 
 function bindMedicineActionEvents(root) {

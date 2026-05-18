@@ -14,26 +14,11 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="hero">
-        <div class="hero-top">
-          <div class="brand-mark" aria-hidden="true">
-            <span></span>
-          </div>
-          <div>
-            <p class="eyebrow">Yak-Map</p>
-            <h1>약-맵</h1>
-            <p class="hero-copy">복약 등록부터 구매처 안내까지 한 번에 관리하세요.</p>
-          </div>
-        </div>
-        <div class="hero-actions">
-          <button class="ghost-button" id="installAppButton" type="button">앱 설치</button>
-          <button class="ghost-button" id="notifyPermissionButton" type="button">알림 허용</button>
-        </div>
-      </header>
+      <header class="hero" id="appHero"></header>
 
       <main id="app" class="content" aria-live="polite"></main>
 
-      <nav class="tabbar" aria-label="주요 메뉴">
+      <nav class="tabbar" id="appTabbar" aria-label="주요 메뉴" hidden>
         <button class="tab-button is-active" type="button" data-tab="home">
           <span aria-hidden="true">⌂</span>
           홈
