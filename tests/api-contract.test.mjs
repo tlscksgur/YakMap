@@ -45,6 +45,6 @@ const url = buildPublicDataUrl("https://example.test/path", "key", {
   Q1: "중구",
   empty: ""
 });
-assert.equal(url.toString(), "https://example.test/path?serviceKey=key&Q0=%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C&Q1=%EC%A4%91%EA%B5%AC");
+assert.equal(url.toString(), "https://example.test/path?ServiceKey=key&Q0=%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C&Q1=%EC%A4%91%EA%B5%AC");
 
 console.log("PASS api contract");

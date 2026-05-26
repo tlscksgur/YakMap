@@ -6,6 +6,6 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/api-contract.test.mjs && node tests/validate-app.mjs"
+    "test": "node tests/security-config.test.mjs && node tests/api-contract.test.mjs && node tests/validate-app.mjs"
   }
 }
