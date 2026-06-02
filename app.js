@@ -95,6 +95,7 @@ const defaultState = {
   users: [],
   currentUserId: null,
   schedules: [],
+  medicine_cache: [],
   selectedTab: "home",
   authMode: "login",
   selectedMedicine: null,
@@ -208,6 +209,13 @@ function userSchedules() {
   return state.schedules
     .filter((schedule) => schedule.user_id === state.currentUserId)
     .sort((a, b) => a.end_date.localeCompare(b.end_date));
+}
+
+function allMedicines() {
+  const merged = [...medicineCache, ...(state.medicine_cache || [])];
+  return merged.filter((medicine, index) => {
+    return merged.findIndex((item) => item.item_name === medicine.item_name) === index;
+  });
 }
 
 function render() {
@@ -342,6 +350,7 @@ function renderApiStatus() {
 function statusLabel(status) {
   if (status === "connected" || status === "live") return "연결됨";
   if (status === "error") return "오류";
+  if (status === "cache") return "캐시";
   if (status === "fallback") return "샘플";
   return "대기";
 }
@@ -460,6 +469,9 @@ function renderMap() {
     if (state.mapFilter === "all") return store.open;
     return store.type === state.mapFilter && store.open;
   });
+  const nightNotice = filtered.length
+    ? ""
+    : `<div class="card empty-state">영업 중인 약국이 부족합니다. 심야에는 24시간 상비약 판매처 또는 응급의료 안내를 확인하세요.</div>`;
 
   return `
     <section class="section-heading">
@@ -485,7 +497,7 @@ function renderMap() {
       <button class="primary-button" type="button" id="refreshStoresButton" style="margin-top: 12px;">실시간 판매처 불러오기</button>
     </section>
     <section class="store-list">
-      ${filtered.map(renderStore).join("") || `<div class="card empty-state">현재 조건에 맞는 판매처가 없습니다.</div>`}
+      ${filtered.map(renderStore).join("") || nightNotice}
     </section>
   `;
 }
@@ -541,7 +553,7 @@ function renderMedicineSearch() {
         <label for="medicineSearch">약 이름</label>
         <input id="medicineSearch" type="search" placeholder="예: 타이레놀, 아목시실린" list="medicineNames" required />
         <datalist id="medicineNames">
-          ${medicineCache.map((medicine) => `<option value="${medicine.item_name}"></option>`).join("")}
+          ${allMedicines().map((medicine) => `<option value="${medicine.item_name}"></option>`).join("")}
         </datalist>
       </div>
       <button class="primary-button" type="submit">전문/일반 판별</button>
@@ -572,13 +584,14 @@ function renderOcrPanel() {
 
 function renderMedicineResult(medicine) {
   const isPrescription = medicine.category === "전문";
+  const guidance = isPrescription ? "처방이 필요한 약입니다" : "약국에서 구매 가능";
   const target = isPrescription ? "병원 진료 후 처방이 필요합니다." : "주변 영업 중인 약국에서 구매처를 확인하세요.";
   return `
     <div class="result-item" style="margin-top: 12px;">
       <div class="item-top">
         <div>
           <h3>${medicine.item_name}</h3>
-          <p>${medicine.efficacy}</p>
+          <p><strong>${guidance}</strong> · ${medicine.efficacy}</p>
         </div>
         <span class="badge ${isPrescription ? "prescription" : "general"}">${medicine.category}</span>
       </div>
@@ -592,7 +605,7 @@ function renderMedicineResult(medicine) {
 }
 
 function renderScheduleForm(prefill = "") {
-  const options = [...medicineCache];
+  const options = allMedicines();
   if (prefill && !options.some((medicine) => medicine.item_name === prefill)) {
     options.unshift({
       item_name: prefill,
@@ -793,7 +806,7 @@ function bindViewEvents() {
     const query = document.querySelector("#medicineSearch").value;
     const medicine = await lookupMedicineRemote(query);
     if (!medicine) {
-      toast("의약품 캐시에 없는 이름입니다. 실제 서비스에서는 식약처 API로 조회합니다.");
+      toast("검색 결과 없음");
       return;
     }
     state.selectedMedicine = medicine;
@@ -819,7 +832,7 @@ function bindViewEvents() {
     const resultRoot = document.querySelector("#ocrResults");
     resultRoot.innerHTML = matches.length
       ? matches.map(renderMedicineResult).join("")
-      : `<div class="empty-state">매칭된 약 이름이 없습니다.</div>`;
+      : `<div class="empty-state">인식 실패 또는 재촬영이 필요합니다.</div>`;
     document.querySelector("#ocrText").value = state.ocrText;
     bindMedicineActionEvents(resultRoot);
     persist();
@@ -863,7 +876,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-store-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const store = [...state.mapPlaces, ...stores].find((item) => item.id === button.dataset.storeId);
-      toast(`${store.name} · ${store.distance}km · ${store.hours}`);
+      toast(`${store.name} · ${store.distance}km · ${store.hours} · ${store.phone}`);
     });
   });
 
@@ -874,7 +887,7 @@ function bindViewEvents() {
     toast("판매처 정보를 갱신했습니다.");
   });
   document.querySelector("#refreshTokenButton")?.addEventListener("click", () => refreshFcmToken());
-  document.querySelector("#logoutButton")?.addEventListener("click", logout);
+  document.querySelector("#logoutButton")?.addEventListener("click", () => logout());
 
   bindUtilityEvents();
 }
@@ -906,6 +919,17 @@ async function authenticate(email, password) {
     return;
   }
 
+  const existingUser = state.users.find((item) => item.email === email);
+  if (state.authMode === "signup" && existingUser) {
+    toast("이미 가입된 이메일입니다.");
+    return;
+  }
+
+  if (state.authMode === "login" && existingUser?.password_hash && existingUser.password_hash !== hashPassword(password)) {
+    toast("이메일 또는 비밀번호가 올바르지 않습니다");
+    return;
+  }
+
   let remoteUser = null;
   try {
     const mode = state.authMode === "signup" ? "signup" : "login";
@@ -914,22 +938,32 @@ async function authenticate(email, password) {
     state.apiStatus.auth = auth.source === "supabase" ? "connected" : "fallback";
   } catch (error) {
     state.apiStatus.auth = "error";
-    toast(`인증 API 오류: ${error.message}`);
+    const authError = error.message.toLowerCase();
+    if (state.authMode === "signup" && (authError.includes("already") || authError.includes("registered") || authError.includes("email"))) {
+      toast("이미 가입된 이메일입니다.");
+    } else if (authError.includes("password") || authError.includes("invalid") || authError.includes("credential")) {
+      toast("이메일 또는 비밀번호가 올바르지 않습니다");
+    } else {
+      toast(`인증 API 오류: ${error.message}`);
+    }
+    return;
   }
 
-  let user = state.users.find((item) => item.email === email);
+  let user = existingUser;
   const userId = remoteUser?.id || user?.id || crypto.randomUUID();
   const fcmToken = await createFcmToken();
   if (!user) {
     user = {
       id: userId,
       email,
+      password_hash: hashPassword(password),
       fcm_token: fcmToken,
       created_at: remoteUser?.created_at || new Date().toISOString()
     };
     state.users.push(user);
   } else {
     user.id = userId;
+    user.password_hash ||= hashPassword(password);
     user.fcm_token = fcmToken;
   }
 
@@ -942,9 +976,12 @@ async function authenticate(email, password) {
   toast(state.authMode === "signup" ? "계정 생성과 토큰 갱신을 처리했습니다." : "로그인하고 FCM 토큰을 갱신했습니다.");
 }
 
-function logout() {
+async function logout() {
   const user = currentUser();
-  if (user) user.fcm_token = "";
+  if (user) {
+    await unregisterFcmTokenForUser(user);
+    user.fcm_token = "";
+  }
   state.currentUserId = null;
   state.selectedMedicine = null;
   state.selectedTab = "home";
@@ -977,6 +1014,15 @@ async function registerFcmTokenForUser(user) {
   }
 }
 
+async function unregisterFcmTokenForUser(user) {
+  try {
+    const result = await apiPost("/api/fcm/unregister", { userId: user.id, token: user.fcm_token });
+    state.apiStatus.fcm = result.source === "supabase" ? "connected" : "fallback";
+  } catch {
+    state.apiStatus.fcm = "error";
+  }
+}
+
 async function getBrowserFcmToken() {
   if (!runtimeConfig.integrations?.firebase?.configured || !("Notification" in window)) return "";
   if (Notification.permission !== "granted") return "";
@@ -1001,16 +1047,30 @@ async function getBrowserFcmToken() {
 
 function lookupMedicine(query) {
   const normalized = normalize(query);
-  return medicineCache.find((medicine) => {
+  return allMedicines().find((medicine) => {
     return normalize(medicine.item_name).includes(normalized)
-      || medicine.aliases.some((alias) => normalize(alias).includes(normalized) || normalized.includes(normalize(alias)));
+      || (medicine.aliases || []).some((alias) => normalize(alias).includes(normalized) || normalized.includes(normalize(alias)));
   });
 }
 
 async function lookupMedicineRemote(query) {
+  const cached = lookupMedicine(query);
+  if (cached) {
+    state.apiStatus.medicine = "cache";
+    return { ...cached, source: "cache" };
+  }
+
   try {
     const medicine = await apiGet(`/api/medicine/search?q=${encodeURIComponent(query)}`);
     state.apiStatus.medicine = medicine.source === "mfds" ? "connected" : "fallback";
+    if (medicine.not_found) return null;
+    if (medicine.source === "mfds" && !lookupMedicine(medicine.item_name)) {
+      state.medicine_cache = [
+        ...(state.medicine_cache || []),
+        { ...medicine, aliases: [medicine.item_name] }
+      ];
+      persist();
+    }
     return medicine;
   } catch (error) {
     state.apiStatus.medicine = "error";
@@ -1025,10 +1085,14 @@ function normalize(value) {
 
 function extractMedicines(text) {
   const normalizedText = normalize(text);
-  return medicineCache.filter((medicine) => {
+  return allMedicines().filter((medicine) => {
     return normalizedText.includes(normalize(medicine.item_name))
-      || medicine.aliases.some((alias) => normalizedText.includes(normalize(alias)));
+      || (medicine.aliases || []).some((alias) => normalizedText.includes(normalize(alias)));
   });
+}
+
+function hashPassword(password) {
+  return btoa(unescape(encodeURIComponent(password)));
 }
 
 function readFileAsDataUrl(file) {

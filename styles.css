@@ -474,11 +474,8 @@ h1 {
 }
 
 .map-pin {
-  z-index: 1;
-}
-
-.map-pin {
   position: absolute;
+  z-index: 1;
   transform: translate(-50%, -50%);
   border: 0;
   border-radius: 999px 999px 999px 8px;

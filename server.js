@@ -11,7 +11,8 @@ import {
   listHospitals,
   listPharmacies,
   publicConfig,
-  registerFcmToken
+  registerFcmToken,
+  unregisterFcmToken
 } from "./lib/api-providers.mjs";
 
 const root = process.cwd();
@@ -83,6 +84,12 @@ async function handleApi(request, response, url) {
 
   if (request.method === "POST" && url.pathname === "/api/fcm/register") {
     const result = await registerFcmToken(await readJson(request), config);
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/fcm/unregister") {
+    const result = await unregisterFcmToken(await readJson(request), config);
     sendJson(response, 200, result);
     return;
   }
