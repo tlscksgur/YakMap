@@ -38,6 +38,8 @@ const assertions = [
   ["SQL defines medication schedules", contents["schema.sql"].includes("create table if not exists public.medication_schedules")],
   ["SQL defines medicine cache", contents["schema.sql"].includes("create table if not exists public.medicine_cache")],
   ["SQL defines safe store list", contents["schema.sql"].includes("create table if not exists public.safe_store_list")],
+  ["SQL enables users RLS", contents["schema.sql"].includes("alter table public.users enable row level security")],
+  ["SQL allows users own insert", contents["schema.sql"].includes('create policy "users_insert_own"')],
   ["server exposes config route", contents["server.js"].includes('url.pathname === "/api/config"')],
   ["providers include Google Vision", contents["lib/api-providers.mjs"].includes("GOOGLE_VISION_URL")]
 ];

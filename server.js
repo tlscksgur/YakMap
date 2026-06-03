@@ -100,7 +100,7 @@ async function handleApi(request, response, url) {
       const result = await authWithSupabase(mode, await readJson(request), config);
       sendJson(response, 200, result);
     } catch (error) {
-      sendJson(response, 401, { error: error.message });
+      sendJson(response, error.status || 401, { error: error.message });
     }
     return;
   }

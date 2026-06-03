@@ -6,6 +6,6 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/security-config.test.mjs && node tests/api-contract.test.mjs && node tests/supabase-profile.test.mjs && node tests/validate-app.mjs && node tests/yakmap-tc.test.mjs"
+    "test": "node tests/security-config.test.mjs && node tests/api-contract.test.mjs && node tests/supabase-profile.test.mjs && node tests/auth-errors.test.mjs && node tests/validate-app.mjs && node tests/yakmap-tc.test.mjs"
   }
 }

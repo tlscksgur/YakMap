@@ -20,6 +20,8 @@ assert.match(app, /이미 가입된 이메일입니다/);
 assert.match(app, /이메일 또는 비밀번호가 올바르지 않습니다/);
 assert.match(app, /localStorage\.setItem/);
 assert.match(app, /로그아웃했고 FCM 토큰을 비활성화했습니다/);
+assert.match(app, /로그인 없이 둘러보기/);
+assert.match(app, /startDemoSession/);
 assert.match(server, /\/api\/fcm\/unregister/);
 
 const token = await registerFcmToken({ userId: "u1", token: "fcm_test" }, config);

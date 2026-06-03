@@ -1,3 +1,5 @@
+import { getAuthErrorMessage } from "./lib/auth-errors.mjs";
+
 const STORAGE_KEY = "yak-map-state-v1";
 
 const today = new Date().toISOString().slice(0, 10);
@@ -378,7 +380,10 @@ function renderAuth() {
           <label for="password">비밀번호</label>
           <input id="password" name="password" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="8자 이상" minlength="8" required />
         </div>
-        <button class="primary-button" type="submit">${isLogin ? "로그인하고 토큰 갱신" : "계정 만들고 인증 메일 발송"}</button>
+        <div class="auth-action-row">
+          <button class="primary-button" type="submit">${isLogin ? "로그인" : "회원가입"}</button>
+          <button class="secondary-button" type="button" id="demoLoginButton">로그인 없이 둘러보기</button>
+        </div>
         <button class="primary-button kakao-button" type="button" id="kakaoMockButton">카카오로 계속하기</button>
       </form>
     </section>
@@ -798,6 +803,8 @@ function bindAuthEvents() {
   document.querySelector("#kakaoMockButton").addEventListener("click", async () => {
     await authenticate("kakao-user@yak-map.local", crypto.randomUUID());
   });
+
+  document.querySelector("#demoLoginButton").addEventListener("click", startDemoSession);
 }
 
 function bindViewEvents() {
@@ -935,17 +942,11 @@ async function authenticate(email, password) {
     const mode = state.authMode === "signup" ? "signup" : "login";
     const auth = await apiPost(`/api/auth/${mode}`, { email, password });
     remoteUser = auth.user;
+    remoteUser.access_token = auth.session?.access_token || "";
     state.apiStatus.auth = auth.source === "supabase" ? "connected" : "fallback";
   } catch (error) {
     state.apiStatus.auth = "error";
-    const authError = error.message.toLowerCase();
-    if (state.authMode === "signup" && (authError.includes("already") || authError.includes("registered") || authError.includes("email"))) {
-      toast("이미 가입된 이메일입니다.");
-    } else if (authError.includes("password") || authError.includes("invalid") || authError.includes("credential")) {
-      toast("이메일 또는 비밀번호가 올바르지 않습니다");
-    } else {
-      toast(`인증 API 오류: ${error.message}`);
-    }
+    toast(getAuthErrorMessage(state.authMode, error.message) || `인증 API 오류: ${error.message}`);
     return;
   }
 
@@ -957,12 +958,14 @@ async function authenticate(email, password) {
       id: userId,
       email,
       password_hash: hashPassword(password),
+      access_token: remoteUser?.access_token || "",
       fcm_token: fcmToken,
       created_at: remoteUser?.created_at || new Date().toISOString()
     };
     state.users.push(user);
   } else {
     user.id = userId;
+    user.access_token = remoteUser?.access_token || user.access_token || "";
     user.password_hash ||= hashPassword(password);
     user.fcm_token = fcmToken;
   }
@@ -974,6 +977,34 @@ async function authenticate(email, password) {
   persist();
   render();
   toast(state.authMode === "signup" ? "계정 생성과 토큰 갱신을 처리했습니다." : "로그인하고 FCM 토큰을 갱신했습니다.");
+}
+
+function startDemoSession() {
+  const demoEmail = "demo@yak-map.local";
+  let user = state.users.find((item) => item.email === demoEmail);
+
+  if (!user) {
+    user = {
+      id: "local-demo-user",
+      email: demoEmail,
+      password_hash: "",
+      access_token: "",
+      fcm_token: `demo_fcm_${Date.now()}`,
+      created_at: new Date().toISOString(),
+      is_demo: true
+    };
+    state.users.push(user);
+  } else {
+    user.fcm_token ||= `demo_fcm_${Date.now()}`;
+  }
+
+  state.currentUserId = user.id;
+  state.selectedTab = "home";
+  state.apiStatus.auth = "fallback";
+  state.apiStatus.fcm = "fallback";
+  persist();
+  render();
+  toast("데모 계정으로 입장했습니다.");
 }
 
 async function logout() {
@@ -1007,7 +1038,7 @@ async function createFcmToken() {
 
 async function registerFcmTokenForUser(user) {
   try {
-    const result = await apiPost("/api/fcm/register", { userId: user.id, token: user.fcm_token });
+    const result = await apiPost("/api/fcm/register", { userId: user.id, token: user.fcm_token, accessToken: user.access_token || "" });
     state.apiStatus.fcm = result.source === "supabase" ? "connected" : "fallback";
   } catch {
     state.apiStatus.fcm = "error";
@@ -1016,7 +1047,7 @@ async function registerFcmTokenForUser(user) {
 
 async function unregisterFcmTokenForUser(user) {
   try {
-    const result = await apiPost("/api/fcm/unregister", { userId: user.id, token: user.fcm_token });
+    const result = await apiPost("/api/fcm/unregister", { userId: user.id, accessToken: user.access_token || "" });
     state.apiStatus.fcm = result.source === "supabase" ? "connected" : "fallback";
   } catch {
     state.apiStatus.fcm = "error";

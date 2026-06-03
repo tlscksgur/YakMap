@@ -40,3 +40,64 @@ create index if not exists medication_schedules_user_id_idx
 
 create index if not exists medication_schedules_date_idx
   on public.medication_schedules(start_date, end_date);
+
+alter table public.users enable row level security;
+alter table public.medication_schedules enable row level security;
+alter table public.medicine_cache enable row level security;
+alter table public.safe_store_list enable row level security;
+
+drop policy if exists "users_select_own" on public.users;
+create policy "users_select_own"
+  on public.users
+  for select
+  using (auth.uid() = id);
+
+drop policy if exists "users_insert_own" on public.users;
+create policy "users_insert_own"
+  on public.users
+  for insert
+  with check (auth.uid() = id);
+
+drop policy if exists "users_update_own" on public.users;
+create policy "users_update_own"
+  on public.users
+  for update
+  using (auth.uid() = id)
+  with check (auth.uid() = id);
+
+drop policy if exists "medication_schedules_select_own" on public.medication_schedules;
+create policy "medication_schedules_select_own"
+  on public.medication_schedules
+  for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "medication_schedules_insert_own" on public.medication_schedules;
+create policy "medication_schedules_insert_own"
+  on public.medication_schedules
+  for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "medication_schedules_update_own" on public.medication_schedules;
+create policy "medication_schedules_update_own"
+  on public.medication_schedules
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "medication_schedules_delete_own" on public.medication_schedules;
+create policy "medication_schedules_delete_own"
+  on public.medication_schedules
+  for delete
+  using (auth.uid() = user_id);
+
+drop policy if exists "medicine_cache_public_select" on public.medicine_cache;
+create policy "medicine_cache_public_select"
+  on public.medicine_cache
+  for select
+  using (true);
+
+drop policy if exists "safe_store_list_public_select" on public.safe_store_list;
+create policy "safe_store_list_public_select"
+  on public.safe_store_list
+  for select
+  using (true);

@@ -169,6 +169,19 @@ h1 {
   margin-top: 18px;
 }
 
+.auth-action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.auth-action-row .primary-button,
+.auth-action-row .secondary-button {
+  min-height: 58px;
+  padding: 0 12px;
+  line-height: 1.25;
+}
+
 .ghost-button,
 .primary-button,
 .secondary-button,

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { authWithSupabase } from "../lib/api-providers.mjs";
+import { AuthProviderError, authWithSupabase } from "../lib/api-providers.mjs";
 
 const calls = [];
 const originalFetch = globalThis.fetch;
@@ -13,7 +13,9 @@ globalThis.fetch = async (url, options = {}) => {
         email: "tester@yakmap.test",
         created_at: "2026-06-01T00:00:00.000Z"
       },
-      session: null
+      session: {
+        access_token: "user-access-token"
+      }
     });
   }
 
@@ -41,6 +43,7 @@ try {
   assert.ok(profileCall, "auth should upsert a public.users profile row");
   assert.equal(profileCall.options.method, "POST");
   assert.match(profileCall.url, /on_conflict=id/);
+  assert.equal(profileCall.options.headers.authorization, "Bearer user-access-token");
   assert.match(profileCall.options.headers.prefer, /resolution=merge-duplicates/);
   assert.deepEqual(JSON.parse(profileCall.options.body), {
     id: "00000000-0000-4000-8000-000000000001",
@@ -49,6 +52,10 @@ try {
 } finally {
   globalThis.fetch = originalFetch;
 }
+
+const rateLimitError = new AuthProviderError("email rate limit exceeded", 429);
+assert.equal(rateLimitError.message, "email rate limit exceeded");
+assert.equal(rateLimitError.status, 429);
 
 console.log("PASS supabase profile");
 
