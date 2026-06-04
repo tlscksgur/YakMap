@@ -2,7 +2,19 @@ create table if not exists public.users (
   id uuid primary key,
   email text not null unique,
   fcm_token text,
+  is_active boolean not null default true,
+  deleted_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.user_fcm_tokens (
+  id bigserial primary key,
+  user_id uuid not null references public.users(id) on delete cascade,
+  device_id text not null,
+  fcm_token text not null,
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  unique (user_id, device_id)
 );
 
 create table if not exists public.medicine_cache (
@@ -32,7 +44,11 @@ create index if not exists medication_schedules_user_id_idx
 create index if not exists medication_schedules_date_idx
   on public.medication_schedules(start_date, end_date);
 
+create index if not exists user_fcm_tokens_user_id_idx
+  on public.user_fcm_tokens(user_id);
+
 alter table public.users enable row level security;
+alter table public.user_fcm_tokens enable row level security;
 alter table public.medication_schedules enable row level security;
 alter table public.medicine_cache enable row level security;
 
@@ -54,6 +70,25 @@ create policy "users_update_own"
   for update
   using (auth.uid() = id)
   with check (auth.uid() = id);
+
+drop policy if exists "user_fcm_tokens_select_own" on public.user_fcm_tokens;
+create policy "user_fcm_tokens_select_own"
+  on public.user_fcm_tokens
+  for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "user_fcm_tokens_insert_own" on public.user_fcm_tokens;
+create policy "user_fcm_tokens_insert_own"
+  on public.user_fcm_tokens
+  for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "user_fcm_tokens_update_own" on public.user_fcm_tokens;
+create policy "user_fcm_tokens_update_own"
+  on public.user_fcm_tokens
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 drop policy if exists "medication_schedules_select_own" on public.medication_schedules;
 create policy "medication_schedules_select_own"

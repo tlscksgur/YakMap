@@ -110,6 +110,17 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/auth/password-reset-code") {
+    try {
+      const { email } = await readJson(request);
+      const result = await sendPasswordResetCode(email);
+      sendJson(response, 200, result);
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === "POST" && (url.pathname === "/api/auth/signup" || url.pathname === "/api/auth/login")) {
     try {
       const mode = url.pathname.endsWith("signup") ? "signup" : "login";
@@ -180,6 +191,23 @@ async function sendSignupVerificationCode(email) {
     code,
     expiresAt: Date.now() + signupCodeTtlMs,
     attempts: 0
+  });
+
+  return { ok: true, expires_in_seconds: signupCodeTtlMs / 1000 };
+}
+
+async function sendPasswordResetCode(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw httpError("사용할 수 없는 이메일 주소입니다.", 400);
+  }
+
+  const code = String(randomInt(0, 1000000)).padStart(6, "0");
+  await sendMail({
+    to: normalizedEmail,
+    subject: "[약-맵] 비밀번호 재설정 인증코드",
+    text: `약-맵 비밀번호 재설정 인증코드입니다.\n\n인증코드: ${code}\n\n본인이 요청하지 않았다면 이 메일을 무시하세요.`,
+    html: `<p>약-맵 비밀번호 재설정 인증코드입니다.</p><p style="font-size:24px;font-weight:700;">${code}</p><p>본인이 요청하지 않았다면 이 메일을 무시하세요.</p>`
   });
 
   return { ok: true, expires_in_seconds: signupCodeTtlMs / 1000 };

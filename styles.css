@@ -335,6 +335,23 @@ h1 {
   gap: 12px;
 }
 
+.check-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #4b525a;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.check-field input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;

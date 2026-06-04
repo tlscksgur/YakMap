@@ -48,7 +48,9 @@ try {
   assert.match(profileCall.options.headers.prefer, /resolution=merge-duplicates/);
   assert.deepEqual(JSON.parse(profileCall.options.body), {
     id: "00000000-0000-4000-8000-000000000001",
-    email: "tester@yakmap.test"
+    email: "tester@yakmap.test",
+    is_active: true,
+    deleted_at: null
   });
 
   calls.length = 0;

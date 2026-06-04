@@ -21,4 +21,9 @@ assert.equal(
   "이메일 또는 비밀번호가 올바르지 않습니다"
 );
 
+assert.equal(
+  getAuthErrorMessage("login", "Email not confirmed"),
+  "Supabase 이메일 확인이 필요합니다. 앱 인증코드로 계정을 복구하세요."
+);
+
 console.log("PASS auth errors");
