@@ -92,6 +92,7 @@ const assertions = [
   ["server normalizes pasted verification codes", contents["server.js"].includes("normalizeVerificationCode")],
   ["server sends signup verification email", contents["server.js"].includes('url.pathname === "/api/auth/signup-code"')],
   ["server sends password reset email", contents["server.js"].includes('url.pathname === "/api/auth/password-reset-code"')],
+  ["server falls back after verified signup rate limits", contents["server.js"].includes("canFallbackAfterVerifiedSignup") && contents["server.js"].includes("Supabase 인증 요청 제한으로 앱 로컬 계정으로 가입을 완료했습니다.")],
   ["app surfaces Kakao map errors", contents["app.js"].includes("renderMapStatus")]
 ];
 

@@ -50,6 +50,8 @@ assert.match(app, /verificationCode: normalizeVerificationCode\(verificationCode
 assert.match(server, /SMTP_HOST/);
 assert.match(server, /sendSignupVerificationCode/);
 assert.match(server, /normalizeVerificationCode/);
+assert.match(server, /canFallbackAfterVerifiedSignup/);
+assert.match(server, /Supabase 인증 요청 제한으로 앱 로컬 계정으로 가입을 완료했습니다/);
 assert.match(app, /renderMapStatus/);
 assert.match(server, /\/api\/fcm\/unregister/);
 assert.match(app, /fcm_tokens/);

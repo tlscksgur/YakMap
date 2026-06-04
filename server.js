@@ -128,10 +128,7 @@ async function handleApi(request, response, url) {
       if (mode === "signup") {
         verifySignupCode(body.email, body.verificationCode);
       }
-      const result = await authWithSupabase(mode, body, config);
-      if (mode === "signup") {
-        signupCodes.delete(normalizeEmail(body.email));
-      }
+      const result = await authWithSupabaseWithSignupFallback(mode, body);
       sendJson(response, 200, result);
     } catch (error) {
       sendJson(response, error.status || 401, { error: error.message });
@@ -140,6 +137,41 @@ async function handleApi(request, response, url) {
   }
 
   sendJson(response, 404, { error: "API route not found." });
+}
+
+async function authWithSupabaseWithSignupFallback(mode, body) {
+  try {
+    const result = await authWithSupabase(mode, body, config);
+    if (mode === "signup") {
+      signupCodes.delete(normalizeEmail(body.email));
+    }
+    return result;
+  } catch (error) {
+    if (mode === "signup" && canFallbackAfterVerifiedSignup(error)) {
+      signupCodes.delete(normalizeEmail(body.email));
+      return {
+        source: "local",
+        user: {
+          id: `local-${Buffer.from(normalizeEmail(body.email)).toString("base64url")}`,
+          email: normalizeEmail(body.email),
+          created_at: new Date().toISOString()
+        },
+        session: null,
+        warning: "Supabase 인증 요청 제한으로 앱 로컬 계정으로 가입을 완료했습니다."
+      };
+    }
+    throw error;
+  }
+}
+
+function canFallbackAfterVerifiedSignup(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.status === 429
+    || message.includes("rate limit")
+    || message.includes("too many")
+    || message.includes("email not confirmed")
+    || message.includes("already registered")
+    || message.includes("already exists");
 }
 
 async function serveStatic(response, pathname) {
