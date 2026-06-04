@@ -33,6 +33,7 @@ try {
   }, {
     supabaseUrl: "https://project.supabase.co",
     supabaseAnonKey: "publishable-key",
+    supabaseServiceRoleKey: "",
     integrations: { supabase: { configured: true } }
   });
 
@@ -49,6 +50,22 @@ try {
     id: "00000000-0000-4000-8000-000000000001",
     email: "tester@yakmap.test"
   });
+
+  calls.length = 0;
+  await authWithSupabase("signup", {
+    email: "tester@yakmap.test",
+    password: "Yakmap-test-12345"
+  }, {
+    supabaseUrl: "https://project.supabase.co",
+    supabaseAnonKey: "publishable-key",
+    supabaseServiceRoleKey: "service-role-key",
+    integrations: { supabase: { configured: true } }
+  });
+
+  const serviceRoleProfileCall = calls.find((call) => call.url.includes("/rest/v1/users"));
+  assert.ok(serviceRoleProfileCall, "service role config should still upsert a public.users profile row");
+  assert.equal(serviceRoleProfileCall.options.headers.authorization, "Bearer service-role-key");
+  assert.equal(serviceRoleProfileCall.options.headers.apikey, "service-role-key");
 } finally {
   globalThis.fetch = originalFetch;
 }

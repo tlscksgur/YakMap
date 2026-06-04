@@ -983,7 +983,10 @@ async function authenticate(email, password, verificationCode = "") {
   let remoteUser = null;
   try {
     const mode = state.authMode === "signup" ? "signup" : "login";
-    const auth = await apiPost(`/api/auth/${mode}`, { email, password });
+    const payload = mode === "signup"
+      ? { email, password, verificationCode: normalizeVerificationCode(verificationCode) }
+      : { email, password };
+    const auth = await apiPost(`/api/auth/${mode}`, payload);
     remoteUser = auth.user;
     remoteUser.access_token = auth.session?.access_token || "";
     state.apiStatus.auth = auth.source === "supabase" ? "connected" : "fallback";

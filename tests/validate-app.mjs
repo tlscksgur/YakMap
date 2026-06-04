@@ -47,6 +47,7 @@ const assertions = [
   ["app excludes install app action", !contents["app.js"].includes("installAppButton")],
   ["app requests signup verification email", contents["app.js"].includes("/api/auth/signup-code")],
   ["app preserves pending signup credentials", contents["app.js"].includes("pendingSignup?.password")],
+  ["app submits signup verification code", contents["app.js"].includes("verificationCode: normalizeVerificationCode(verificationCode)")],
   ["server normalizes pasted verification codes", contents["server.js"].includes("normalizeVerificationCode")],
   ["server sends signup verification email", contents["server.js"].includes('url.pathname === "/api/auth/signup-code"')],
   ["app surfaces Kakao map errors", contents["app.js"].includes("renderMapStatus")]

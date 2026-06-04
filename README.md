@@ -16,7 +16,7 @@ npm start
 ## 구현 범위
 
 - 이메일 회원가입/로그인 흐름과 로그인 시 FCM 토큰 갱신
-- Supabase 키가 있으면 Auth/PostgREST 호출, 없으면 로컬 세션 fallback
+- Supabase anon 키가 있으면 Auth 호출, service role 키가 있으면 서버에서 `users` 프로필/FCM 저장
 - 이미지 업로드 또는 OCR 텍스트 입력 후 약 이름 자동 매칭
 - OpenRouter 키가 있으면 `baidu/qianfan-ocr-fast:free` OCR 실호출, 없으면 샘플 OCR fallback
 - 식약처 e약은요 키가 있으면 일반의약품 실조회, 없으면 로컬 `medicine_cache` 샘플로 전문/일반 판별
@@ -42,6 +42,7 @@ npm start
 
 - `server.js`와 `lib/api-providers.mjs`가 식약처, OpenRouter OCR, 국립중앙의료원, Supabase 호출을 담당합니다.
 - 프론트는 `/api/*`만 호출하므로 service key가 브라우저에 노출되지 않습니다.
+- Supabase `users` 저장이 RLS 403으로 막히면 `.env`에 서버 전용 `SUPABASE_SERVICE_ROLE_KEY`를 추가하고 서버를 재시작하세요.
 - `schema.sql`을 Supabase SQL Editor에 적용한 뒤 Row Level Security 정책을 추가하세요.
 - 자세한 교체 지점은 [docs/api-integration.md](docs/api-integration.md)에 정리했습니다.
 

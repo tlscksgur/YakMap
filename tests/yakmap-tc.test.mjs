@@ -28,6 +28,7 @@ assert.match(app, /다른 이메일로 가입/);
 assert.match(app, /\/api\/auth\/signup-code/);
 assert.match(app, /pendingSignup\?\.password/);
 assert.match(app, /normalizeVerificationCode/);
+assert.match(app, /verificationCode: normalizeVerificationCode\(verificationCode\)/);
 assert.match(server, /SMTP_HOST/);
 assert.match(server, /sendSignupVerificationCode/);
 assert.match(server, /normalizeVerificationCode/);

@@ -16,6 +16,7 @@ for (const pattern of secretPatterns) {
 }
 
 assert.match(envExample, /SUPABASE_URL=/);
+assert.match(envExample, /SUPABASE_SERVICE_ROLE_KEY=/);
 assert.match(envExample, /SMTP_HOST=/);
 assert.match(envExample, /SMTP_USER=/);
 assert.match(envExample, /SMTP_PASS=/);
