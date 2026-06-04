@@ -30,6 +30,8 @@ const assertions = [
   ["app has OCR file input", contents["app.js"].includes('type="file"')],
   ["app has API status display", contents["app.js"].includes("renderApiStatus")],
   ["app has Kakao SDK hook", contents["app.js"].includes("loadKakaoMapSdk")],
+  ["app explains Kakao map local service setup", contents["app.js"].includes("카카오맵/로컬 서비스 활성화")],
+  ["app hides fallback map pins when live Kakao map is configured", contents["app.js"].includes("shouldRenderFallbackPins")],
   ["app has OCR matching", contents["app.js"].includes("extractMedicines")],
   ["app has schedule table shape", contents["app.js"].includes("dosage_times")],
   ["app has map guidance", contents["app.js"].includes("map.kakao.com")],

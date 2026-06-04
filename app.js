@@ -291,7 +291,7 @@ function afterRender() {
   if (state.selectedTab === "map") {
     renderLiveKakaoMap().catch((error) => {
       state.apiStatus.kakao = "error";
-      setMapStatus(`카카오맵 로딩 실패: ${error.message}`);
+      setMapStatus(kakaoMapSetupHelp(error.message));
     });
   }
 }
@@ -470,6 +470,9 @@ function renderMap() {
     if (state.mapFilter === "all") return store.open;
     return store.type === state.mapFilter && store.open;
   });
+  const shouldRenderFallbackPins = !runtimeConfig.integrations?.kakaoMap?.configured
+    || state.apiStatus.kakao === "error"
+    || state.apiStatus.kakao === "fallback";
   const nightNotice = filtered.length
     ? ""
     : `<div class="card empty-state">영업 중인 약국이 부족합니다. 심야에는 24시간 상비약 판매처 또는 응급의료 안내를 확인하세요.</div>`;
@@ -494,7 +497,7 @@ function renderMap() {
       <div class="map-panel" aria-label="주변 판매처 지도">
         <div id="kakaoMap" class="kakao-map"></div>
         <div id="mapStatus" class="map-status">${renderMapStatus()}</div>
-        ${filtered.map(renderPin).join("")}
+        ${shouldRenderFallbackPins ? filtered.map(renderPin).join("") : ""}
       </div>
       <button class="primary-button" type="button" id="refreshStoresButton" style="margin-top: 12px;">실시간 판매처 불러오기</button>
     </section>
@@ -735,16 +738,30 @@ async function loadKakaoMapSdk() {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector("script[data-kakao-map-sdk]");
     if (existing) {
-      existing.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
-      existing.addEventListener("error", () => reject(new Error("SDK 스크립트 로드 실패")), { once: true });
-      return;
+      if (existing.dataset.status === "error") existing.remove();
+      else {
+        existing.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
+        existing.addEventListener("error", () => reject(new Error("SDK 스크립트 로드 실패")), { once: true });
+        return;
+      }
     }
 
     const script = document.createElement("script");
     script.dataset.kakaoMapSdk = "true";
+    script.dataset.status = "loading";
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(runtimeConfig.kakaoMapKey)}&libraries=services&autoload=false`;
-    script.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
-    script.addEventListener("error", () => reject(new Error("SDK 스크립트 로드 실패")), { once: true });
+    script.addEventListener("load", () => {
+      script.dataset.status = "loaded";
+      if (!window.kakao?.maps?.load) {
+        reject(new Error("SDK 객체 초기화 실패"));
+        return;
+      }
+      window.kakao.maps.load(() => resolve(true));
+    }, { once: true });
+    script.addEventListener("error", () => {
+      script.dataset.status = "error";
+      reject(new Error("SDK 스크립트 로드 실패"));
+    }, { once: true });
     document.head.append(script);
   });
 }
@@ -782,12 +799,17 @@ async function renderLiveKakaoMap() {
 function renderMapStatus() {
   if (state.apiStatus.kakao === "connected") return "";
   if (state.apiStatus.kakao === "error") {
-    return "카카오맵 로딩 실패. Kakao Developers Web 플랫폼에 http://localhost:4173 도메인을 등록했는지 확인하세요.";
+    return kakaoMapSetupHelp();
   }
   if (!runtimeConfig.integrations?.kakaoMap?.configured) {
     return "카카오맵 JavaScript 키가 필요합니다. 현재는 위치 마커 UI로 표시합니다.";
   }
   return "카카오맵 로딩 중입니다.";
+}
+
+function kakaoMapSetupHelp(reason = "") {
+  const reasonText = reason ? ` (${reason})` : "";
+  return `카카오맵 로딩 실패${reasonText}. Kakao Developers에서 Web 플랫폼 도메인 http://localhost:4173 등록과 카카오맵/로컬 서비스 활성화를 확인하세요.`;
 }
 
 function setMapStatus(message) {

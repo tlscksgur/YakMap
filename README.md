@@ -24,7 +24,7 @@ npm start
 - 복용 시간 배열, 시작일, 종료일, 잔여 알약 수를 갖는 복약 스케줄
 - 복용 체크 시 잔여 알약 차감 및 1일분 이하 경고
 - 공공데이터 키가 있으면 약국/병원 실조회, 없으면 샘플 판매처 fallback
-- 카카오맵 키가 있으면 실제 SDK 지도, 없으면 지도형 UI와 카카오맵 검색 링크
+- 카카오맵 JavaScript 키와 지도/로컬 서비스가 활성화되어 있으면 실제 SDK 지도, 없으면 지도형 UI와 카카오맵 검색 링크
 - 따뜻한 크림 배경과 코랄/피치 중심 디자인 시스템
 
 ## API 엔드포인트
@@ -43,6 +43,7 @@ npm start
 - `server.js`와 `lib/api-providers.mjs`가 식약처, OpenRouter OCR, 국립중앙의료원, Supabase 호출을 담당합니다.
 - 프론트는 `/api/*`만 호출하므로 service key가 브라우저에 노출되지 않습니다.
 - Supabase `users` 저장이 RLS 403으로 막히면 `.env`에 서버 전용 `SUPABASE_SERVICE_ROLE_KEY`를 추가하고 서버를 재시작하세요.
+- 카카오맵 SDK가 403이면 Kakao Developers에서 Web 플랫폼 도메인 `http://localhost:4173`과 카카오맵/로컬 서비스 활성화 상태를 확인하세요.
 - `schema.sql`을 Supabase SQL Editor에 적용한 뒤 Row Level Security 정책을 추가하세요.
 - 자세한 교체 지점은 [docs/api-integration.md](docs/api-integration.md)에 정리했습니다.
 

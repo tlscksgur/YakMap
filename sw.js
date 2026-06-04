@@ -1,4 +1,4 @@
-const CACHE_NAME = "yak-map-static-v1";
+const CACHE_NAME = "yak-map-static-v3";
 const ASSETS = [
   "./",
   "./index.html",

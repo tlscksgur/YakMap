@@ -7,6 +7,7 @@
 ```bash
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 FIREBASE_API_KEY=
 FIREBASE_PROJECT_ID=
 FIREBASE_MESSAGING_SENDER_ID=
@@ -39,6 +40,7 @@ NMC_PHARMACY_SERVICE_KEY=
 - 국립중앙의료원 병·의원: `https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire`
 - OpenRouter OCR: `https://openrouter.ai/api/v1/chat/completions`
 - 카카오맵 SDK: `https://dapi.kakao.com/v2/maps/sdk.js`
+- 카카오맵 SDK 403 `OPEN_MAP_AND_LOCAL service` 오류는 Kakao Developers에서 카카오맵/로컬 서비스를 활성화해야 해결됩니다.
 
 ## Server-side reminder flow
 
