@@ -12,7 +12,8 @@ import {
 const emptyConfig = getRuntimeConfig({});
 
 assert.equal(emptyConfig.integrations.mfds.configured, false);
-assert.equal(emptyConfig.integrations.googleVision.configured, false);
+assert.equal(emptyConfig.integrations.openRouterOcr.configured, false);
+assert.equal(emptyConfig.integrations.openRouterOcr.model, "baidu/qianfan-ocr-fast:free");
 assert.equal(emptyConfig.integrations.kakaoMap.configured, false);
 
 const medicine = await classifyMedicine("타이레놀", emptyConfig);
@@ -27,6 +28,38 @@ assert.equal(prescription.is_prescription, true);
 const ocr = await extractTextFromImage("", emptyConfig);
 assert.equal(ocr.source, "sample");
 assert.match(ocr.text, /타이레놀/);
+
+const originalFetch = globalThis.fetch;
+let openRouterRequest = null;
+globalThis.fetch = async (url, options) => {
+  openRouterRequest = { url, options, body: JSON.parse(options.body) };
+  return {
+    ok: true,
+    json: async () => ({
+      choices: [
+        {
+          message: {
+            content: "타이레놀정500mg\n아침 저녁 식후 30분"
+          }
+        }
+      ]
+    })
+  };
+};
+
+const liveOcr = await extractTextFromImage(
+  "data:image/png;base64,dGVzdA==",
+  getRuntimeConfig({ OPENROUTER_API_KEY: "test-openrouter-key" })
+);
+globalThis.fetch = originalFetch;
+
+assert.equal(liveOcr.source, "openrouter-ocr");
+assert.match(liveOcr.text, /타이레놀정500mg/);
+assert.equal(String(openRouterRequest.url), "https://openrouter.ai/api/v1/chat/completions");
+assert.equal(openRouterRequest.body.model, "baidu/qianfan-ocr-fast:free");
+assert.equal(openRouterRequest.body.messages[0].content[1].type, "image_url");
+assert.equal(openRouterRequest.body.messages[0].content[1].image_url.url, "data:image/png;base64,dGVzdA==");
+assert.match(openRouterRequest.options.headers.authorization, /^Bearer test-openrouter-key$/);
 
 const pharmacies = await listPharmacies({ region1: "서울특별시", region2: "중구" }, emptyConfig);
 assert.equal(pharmacies.source, "sample");

@@ -109,12 +109,13 @@ const defaultState = {
 };
 
 let state = loadState();
+let pendingSignup = null;
 let runtimeConfig = {
   integrations: {
     supabase: { configured: false },
     firebase: { configured: false },
     kakaoMap: { configured: false },
-    googleVision: { configured: false },
+    openRouterOcr: { configured: false },
     mfds: { configured: false },
     nmc: { configured: false }
   },
@@ -122,18 +123,12 @@ let runtimeConfig = {
   kakaoMapKey: "",
   liveApisEnabled: false
 };
-let deferredInstallPrompt = null;
 let reminderInterval = null;
 let serviceWorkerRegistration = null;
 
 const app = document.querySelector("#app");
 const appHero = document.querySelector("#appHero");
 const appTabbar = document.querySelector("#appTabbar");
-
-window.addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  deferredInstallPrompt = event;
-});
 
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", async () => {
@@ -267,7 +262,6 @@ function renderHero(user) {
         </div>
       </div>
       <div class="hero-actions">
-        <button class="ghost-button" id="installAppButton" type="button">앱 설치</button>
         <button class="ghost-button" id="notifyPermissionButton" type="button">알림 허용</button>
       </div>
     `;
@@ -287,19 +281,6 @@ function renderHero(user) {
 }
 
 function bindUtilityEvents() {
-  const installBtn = document.querySelector("#installAppButton");
-  if (installBtn) {
-    installBtn.addEventListener("click", async () => {
-      if (!deferredInstallPrompt) {
-        toast("브라우저 메뉴에서 홈 화면에 추가할 수 있습니다.");
-        return;
-      }
-      deferredInstallPrompt.prompt();
-      await deferredInstallPrompt.userChoice;
-      deferredInstallPrompt = null;
-    });
-  }
-
   const notifyBtn = document.querySelector("#notifyPermissionButton");
   if (notifyBtn) {
     notifyBtn.addEventListener("click", requestNotificationPermission);
@@ -308,7 +289,10 @@ function bindUtilityEvents() {
 
 function afterRender() {
   if (state.selectedTab === "map") {
-    renderLiveKakaoMap().catch(() => {});
+    renderLiveKakaoMap().catch((error) => {
+      state.apiStatus.kakao = "error";
+      setMapStatus(`카카오맵 로딩 실패: ${error.message}`);
+    });
   }
 }
 
@@ -322,7 +306,7 @@ function renderApiStatus() {
   const integrations = runtimeConfig.integrations || {};
   const rows = [
     ["식약처 e약은요", integrations.mfds?.configured, state.apiStatus.medicine],
-    ["Google Vision OCR", integrations.googleVision?.configured, state.apiStatus.ocr],
+    ["OpenRouter OCR", integrations.openRouterOcr?.configured, state.apiStatus.ocr],
     ["약국/병원 공공 API", integrations.nmc?.configured, state.apiStatus.stores],
     ["카카오맵", integrations.kakaoMap?.configured, state.apiStatus.kakao],
     ["Supabase", integrations.supabase?.configured, state.apiStatus.auth],
@@ -359,12 +343,13 @@ function statusLabel(status) {
 
 function renderAuth() {
   const isLogin = state.authMode === "login";
+  const isWaitingForCode = !isLogin && Boolean(pendingSignup?.email);
   return `
     <section class="card auth-panel">
       <div class="section-heading">
         <div>
           <h2>${isLogin ? "로그인" : "회원가입"}</h2>
-          <p>${isLogin ? "세션 유지와 FCM 토큰 갱신을 처리합니다." : "이메일 인증 흐름을 가정한 로컬 가입입니다."}</p>
+          <p>${isLogin ? "세션 유지와 FCM 토큰 갱신을 처리합니다." : "랜덤 인증코드를 입력한 뒤 계정을 만듭니다."}</p>
         </div>
       </div>
       <div class="segmented" role="tablist" aria-label="인증 모드">
@@ -372,19 +357,30 @@ function renderAuth() {
         <button class="${!isLogin ? "is-active" : ""}" type="button" data-auth-mode="signup">회원가입</button>
       </div>
       <form class="form-grid" id="authForm">
-        <div class="field">
-          <label for="email">이메일</label>
-          <input id="email" name="email" type="email" autocomplete="email" placeholder="yakmap@example.com" required />
-        </div>
-        <div class="field">
-          <label for="password">비밀번호</label>
-          <input id="password" name="password" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="8자 이상" minlength="8" required />
-        </div>
+        ${isWaitingForCode ? `
+          <div class="verification-box">
+            <p class="muted">인증코드 발송 완료</p>
+            <strong>${escapeHtml(pendingSignup.email)}</strong>
+            <span>이메일로 받은 6자리 코드를 입력하세요.</span>
+          </div>
+          <div class="field">
+            <label for="verificationCode">인증코드 입력</label>
+            <input id="verificationCode" name="verificationCode" type="text" inputmode="numeric" maxlength="6" placeholder="6자리 숫자" required />
+          </div>
+        ` : `
+          <div class="field">
+            <label for="email">이메일</label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="yakmap@example.com" required />
+          </div>
+          <div class="field">
+            <label for="password">비밀번호</label>
+            <input id="password" name="password" type="password" autocomplete="${isLogin ? "current-password" : "new-password"}" placeholder="8자 이상" minlength="8" required />
+          </div>
+        `}
         <div class="auth-action-row">
-          <button class="primary-button" type="submit">${isLogin ? "로그인" : "회원가입"}</button>
-          <button class="secondary-button" type="button" id="demoLoginButton">로그인 없이 둘러보기</button>
+          <button class="primary-button" type="submit">${isLogin ? "로그인" : isWaitingForCode ? "인증하고 회원가입" : "인증코드 이메일 발송"}</button>
+          ${isWaitingForCode ? `<button class="secondary-button" type="button" id="resetSignupButton">다른 이메일로 가입</button>` : ""}
         </div>
-        <button class="primary-button kakao-button" type="button" id="kakaoMockButton">카카오로 계속하기</button>
       </form>
     </section>
   `;
@@ -497,6 +493,7 @@ function renderMap() {
       </div>
       <div class="map-panel" aria-label="주변 판매처 지도">
         <div id="kakaoMap" class="kakao-map"></div>
+        <div id="mapStatus" class="map-status">${renderMapStatus()}</div>
         ${filtered.map(renderPin).join("")}
       </div>
       <button class="primary-button" type="button" id="refreshStoresButton" style="margin-top: 12px;">실시간 판매처 불러오기</button>
@@ -517,13 +514,6 @@ function renderProfile() {
       </div>
     </section>
     
-    <section class="card profile-grid">
-      <div class="two-col">
-        <button class="secondary-button" id="installAppButton" type="button">앱 설치</button>
-        <button class="secondary-button" id="notifyPermissionButton" type="button">알림 허용</button>
-      </div>
-    </section>
-
     ${renderApiStatus()}
     <section class="card profile-grid">
       <div>
@@ -540,12 +530,8 @@ function renderProfile() {
         <span class="status-chip badge warning">외부 API 키 필요</span>
       </div>
       <button class="secondary-button" type="button" id="refreshTokenButton">FCM 토큰 다시 갱신</button>
+      <button class="secondary-button" id="notifyPermissionButton" type="button">알림 허용</button>
       <button class="text-button" type="button" id="logoutButton">로그아웃</button>
-    </section>
-    <section class="card">
-      <h2>데이터 모델</h2>
-      <p class="muted">users, medication_schedules, medicine_cache, safe_store_list 구조를 기준으로 로컬 저장소가 동작합니다.</p>
-      <img src="./assest/img/erd.webp" alt="약-맵 복약 관리 및 알림 서비스 ERD" style="width: 100%; border-radius: 18px; border: 1px solid var(--line);" />
     </section>
   `;
 }
@@ -750,7 +736,7 @@ async function loadKakaoMapSdk() {
     const existing = document.querySelector("script[data-kakao-map-sdk]");
     if (existing) {
       existing.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
-      existing.addEventListener("error", reject, { once: true });
+      existing.addEventListener("error", () => reject(new Error("SDK 스크립트 로드 실패")), { once: true });
       return;
     }
 
@@ -758,20 +744,27 @@ async function loadKakaoMapSdk() {
     script.dataset.kakaoMapSdk = "true";
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(runtimeConfig.kakaoMapKey)}&libraries=services&autoload=false`;
     script.addEventListener("load", () => window.kakao.maps.load(() => resolve(true)), { once: true });
-    script.addEventListener("error", reject, { once: true });
+    script.addEventListener("error", () => reject(new Error("SDK 스크립트 로드 실패")), { once: true });
     document.head.append(script);
   });
 }
 
 async function renderLiveKakaoMap() {
   const mapRoot = document.querySelector("#kakaoMap");
-  if (!mapRoot || !runtimeConfig.integrations?.kakaoMap?.configured) return;
+  if (!mapRoot) return;
+  if (!runtimeConfig.integrations?.kakaoMap?.configured) {
+    state.apiStatus.kakao = "fallback";
+    setMapStatus(renderMapStatus());
+    return;
+  }
+  setMapStatus("카카오맵 로딩 중입니다.");
   const loaded = await loadKakaoMapSdk();
   if (!loaded) return;
 
   const places = state.mapPlaces.length ? state.mapPlaces : stores;
   const center = new window.kakao.maps.LatLng(places[0]?.lat || 37.5665, places[0]?.lng || 126.978);
   const map = new window.kakao.maps.Map(mapRoot, { center, level: 5 });
+  mapRoot.closest(".map-panel")?.classList.add("has-live-map");
   places.forEach((place) => {
     if (!place.lat || !place.lng) return;
     const marker = new window.kakao.maps.Marker({
@@ -783,12 +776,30 @@ async function renderLiveKakaoMap() {
     window.kakao.maps.event.addListener(marker, "click", () => info.open(map, marker));
   });
   state.apiStatus.kakao = "connected";
+  setMapStatus("");
+}
+
+function renderMapStatus() {
+  if (state.apiStatus.kakao === "connected") return "";
+  if (state.apiStatus.kakao === "error") {
+    return "카카오맵 로딩 실패. Kakao Developers Web 플랫폼에 http://localhost:4173 도메인을 등록했는지 확인하세요.";
+  }
+  if (!runtimeConfig.integrations?.kakaoMap?.configured) {
+    return "카카오맵 JavaScript 키가 필요합니다. 현재는 위치 마커 UI로 표시합니다.";
+  }
+  return "카카오맵 로딩 중입니다.";
+}
+
+function setMapStatus(message) {
+  const status = document.querySelector("#mapStatus");
+  if (status) status.textContent = message;
 }
 
 function bindAuthEvents() {
   document.querySelectorAll("[data-auth-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       state.authMode = button.dataset.authMode;
+      pendingSignup = null;
       persist();
       render();
     });
@@ -797,14 +808,15 @@ function bindAuthEvents() {
   document.querySelector("#authForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await authenticate(String(form.get("email")), String(form.get("password")));
+    const email = pendingSignup?.email || String(form.get("email") || "");
+    const password = pendingSignup?.password || String(form.get("password") || "");
+    await authenticate(email, password, String(form.get("verificationCode") || ""));
   });
 
-  document.querySelector("#kakaoMockButton").addEventListener("click", async () => {
-    await authenticate("kakao-user@yak-map.local", crypto.randomUUID());
+  document.querySelector("#resetSignupButton")?.addEventListener("click", () => {
+    pendingSignup = null;
+    render();
   });
-
-  document.querySelector("#demoLoginButton").addEventListener("click", startDemoSession);
 }
 
 function bindViewEvents() {
@@ -828,7 +840,7 @@ function bindViewEvents() {
     let matches = extractMedicines(state.ocrText);
     try {
       const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
-      state.apiStatus.ocr = ocr.source === "google-vision" ? "connected" : "fallback";
+      state.apiStatus.ocr = ocr.source === "openrouter-ocr" ? "connected" : "fallback";
       state.ocrText = ocr.text || state.ocrText;
       matches = ocr.medicines?.length ? ocr.medicines : matches;
       if (ocr.warning) toast(ocr.warning);
@@ -920,7 +932,7 @@ function bindMedicineActionEvents(root) {
   });
 }
 
-async function authenticate(email, password) {
+async function authenticate(email, password, verificationCode = "") {
   if (!email || !password || password.length < 8) {
     toast("이메일과 8자 이상 비밀번호를 입력하세요.");
     return;
@@ -937,6 +949,37 @@ async function authenticate(email, password) {
     return;
   }
 
+  if (state.authMode === "signup") {
+    if (!pendingSignup || pendingSignup.email !== email || pendingSignup.password !== password) {
+      try {
+        await apiPost("/api/auth/signup-code", { email });
+      } catch (error) {
+        toast(`인증코드 이메일 발송 실패: ${error.message}`);
+        return;
+      }
+      pendingSignup = {
+        email,
+        password,
+        expires_at: Date.now() + 10 * 60 * 1000
+      };
+      render();
+      toast("인증코드를 이메일로 보냈습니다.");
+      return;
+    }
+
+    if (Date.now() > pendingSignup.expires_at) {
+      pendingSignup = null;
+      render();
+      toast("인증코드가 만료되었습니다. 다시 생성하세요.");
+      return;
+    }
+
+    if (!normalizeVerificationCode(verificationCode)) {
+      toast("이메일로 받은 인증코드를 입력하세요.");
+      return;
+    }
+  }
+
   let remoteUser = null;
   try {
     const mode = state.authMode === "signup" ? "signup" : "login";
@@ -947,6 +990,14 @@ async function authenticate(email, password) {
   } catch (error) {
     state.apiStatus.auth = "error";
     toast(getAuthErrorMessage(state.authMode, error.message) || `인증 API 오류: ${error.message}`);
+    return;
+  }
+
+  if (state.authMode === "signup" && !remoteUser?.access_token) {
+    pendingSignup = null;
+    persist();
+    render();
+    toast("회원가입 요청 완료. Supabase 이메일 확인 설정이 켜져 있으면 로그인 전 확인이 필요합니다.");
     return;
   }
 
@@ -972,39 +1023,12 @@ async function authenticate(email, password) {
 
   await registerFcmTokenForUser(user);
 
+  pendingSignup = null;
   state.currentUserId = user.id;
   state.selectedTab = "home";
   persist();
   render();
   toast(state.authMode === "signup" ? "계정 생성과 토큰 갱신을 처리했습니다." : "로그인하고 FCM 토큰을 갱신했습니다.");
-}
-
-function startDemoSession() {
-  const demoEmail = "demo@yak-map.local";
-  let user = state.users.find((item) => item.email === demoEmail);
-
-  if (!user) {
-    user = {
-      id: "local-demo-user",
-      email: demoEmail,
-      password_hash: "",
-      access_token: "",
-      fcm_token: `demo_fcm_${Date.now()}`,
-      created_at: new Date().toISOString(),
-      is_demo: true
-    };
-    state.users.push(user);
-  } else {
-    user.fcm_token ||= `demo_fcm_${Date.now()}`;
-  }
-
-  state.currentUserId = user.id;
-  state.selectedTab = "home";
-  state.apiStatus.auth = "fallback";
-  state.apiStatus.fcm = "fallback";
-  persist();
-  render();
-  toast("데모 계정으로 입장했습니다.");
 }
 
 async function logout() {
@@ -1120,6 +1144,10 @@ function extractMedicines(text) {
     return normalizedText.includes(normalize(medicine.item_name))
       || (medicine.aliases || []).some((alias) => normalizedText.includes(normalize(alias)));
   });
+}
+
+function normalizeVerificationCode(code) {
+  return String(code || "").replace(/\D/g, "");
 }
 
 function hashPassword(password) {

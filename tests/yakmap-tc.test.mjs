@@ -20,8 +20,18 @@ assert.match(app, /이미 가입된 이메일입니다/);
 assert.match(app, /이메일 또는 비밀번호가 올바르지 않습니다/);
 assert.match(app, /localStorage\.setItem/);
 assert.match(app, /로그아웃했고 FCM 토큰을 비활성화했습니다/);
-assert.match(app, /로그인 없이 둘러보기/);
-assert.match(app, /startDemoSession/);
+assert.doesNotMatch(app, /로그인 없이 둘러보기/);
+assert.doesNotMatch(app, /카카오로 계속하기/);
+assert.match(app, /인증코드 이메일 발송/);
+assert.match(app, /인증하고 회원가입/);
+assert.match(app, /다른 이메일로 가입/);
+assert.match(app, /\/api\/auth\/signup-code/);
+assert.match(app, /pendingSignup\?\.password/);
+assert.match(app, /normalizeVerificationCode/);
+assert.match(server, /SMTP_HOST/);
+assert.match(server, /sendSignupVerificationCode/);
+assert.match(server, /normalizeVerificationCode/);
+assert.match(app, /renderMapStatus/);
 assert.match(server, /\/api\/fcm\/unregister/);
 
 const token = await registerFcmToken({ userId: "u1", token: "fcm_test" }, config);
@@ -57,6 +67,7 @@ assert.match(app, /new Notification/);
 assert.match(app, /isWithinSchedule/);
 assert.match(sw, /showNotification/);
 assert.match(schema, /create table if not exists public\.medicine_cache/);
+assert.doesNotMatch(schema, /safe_store_list/);
 assert.match(app, /state\.medicine_cache/);
 assert.match(app, /source === "mfds"/);
 

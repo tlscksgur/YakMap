@@ -6,7 +6,7 @@
 
 **Architecture:** Add a zero-dependency Node proxy server that serves the existing PWA and owns secret-bearing API calls. Keep the frontend API surface small: `/api/config`, `/api/medicine/search`, `/api/ocr`, `/api/pharmacies`, `/api/hospitals`, `/api/fcm/register`, and `/api/auth/*`.
 
-**Tech Stack:** Node 24 built-ins, browser JavaScript, public REST APIs, Supabase Auth/PostgREST via REST, Google Vision REST, Kakao Maps JavaScript SDK.
+**Tech Stack:** Node 24 built-ins, browser JavaScript, public REST APIs, Supabase Auth/PostgREST via REST, OpenRouter OCR REST, Kakao Maps JavaScript SDK.
 
 ---
 

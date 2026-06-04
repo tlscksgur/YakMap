@@ -26,15 +26,6 @@ create table if not exists public.medication_schedules (
   check (end_date >= start_date)
 );
 
-create table if not exists public.safe_store_list (
-  store_name text primary key,
-  address text not null,
-  geo_location point,
-  phone text,
-  open_hours text,
-  updated_at timestamptz not null default now()
-);
-
 create index if not exists medication_schedules_user_id_idx
   on public.medication_schedules(user_id);
 
@@ -44,7 +35,6 @@ create index if not exists medication_schedules_date_idx
 alter table public.users enable row level security;
 alter table public.medication_schedules enable row level security;
 alter table public.medicine_cache enable row level security;
-alter table public.safe_store_list enable row level security;
 
 drop policy if exists "users_select_own" on public.users;
 create policy "users_select_own"
@@ -93,11 +83,5 @@ create policy "medication_schedules_delete_own"
 drop policy if exists "medicine_cache_public_select" on public.medicine_cache;
 create policy "medicine_cache_public_select"
   on public.medicine_cache
-  for select
-  using (true);
-
-drop policy if exists "safe_store_list_public_select" on public.safe_store_list;
-create policy "safe_store_list_public_select"
-  on public.safe_store_list
   for select
   using (true);

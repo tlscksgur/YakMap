@@ -171,7 +171,7 @@ h1 {
 
 .auth-action-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -180,6 +180,28 @@ h1 {
   min-height: 58px;
   padding: 0 12px;
   line-height: 1.25;
+}
+
+.verification-box {
+  border: 1px solid #f1b1a6;
+  border-radius: 18px;
+  background: #fff8f5;
+  padding: 14px 16px;
+}
+
+.verification-box strong {
+  display: block;
+  color: var(--primary-strong);
+  font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.verification-box span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .ghost-button,
@@ -484,6 +506,26 @@ h1 {
   position: absolute;
   inset: 0;
   z-index: 0;
+}
+
+.map-status {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(119, 72, 55, 0.12);
+}
+
+.map-panel.has-live-map .map-status,
+.map-panel.has-live-map .map-pin {
+  display: none;
 }
 
 .map-pin {

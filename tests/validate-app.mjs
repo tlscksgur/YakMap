@@ -37,11 +37,19 @@ const assertions = [
   ["SQL defines users", contents["schema.sql"].includes("create table if not exists public.users")],
   ["SQL defines medication schedules", contents["schema.sql"].includes("create table if not exists public.medication_schedules")],
   ["SQL defines medicine cache", contents["schema.sql"].includes("create table if not exists public.medicine_cache")],
-  ["SQL defines safe store list", contents["schema.sql"].includes("create table if not exists public.safe_store_list")],
+  ["SQL excludes safe store list", !contents["schema.sql"].includes("safe_store_list")],
   ["SQL enables users RLS", contents["schema.sql"].includes("alter table public.users enable row level security")],
   ["SQL allows users own insert", contents["schema.sql"].includes('create policy "users_insert_own"')],
   ["server exposes config route", contents["server.js"].includes('url.pathname === "/api/config"')],
-  ["providers include Google Vision", contents["lib/api-providers.mjs"].includes("GOOGLE_VISION_URL")]
+  ["providers include OpenRouter OCR", contents["lib/api-providers.mjs"].includes("OPENROUTER_CHAT_URL")],
+  ["app excludes Kakao login mock", !contents["app.js"].includes("kakaoMockButton")],
+  ["app excludes demo login", !contents["app.js"].includes("startDemoSession")],
+  ["app excludes install app action", !contents["app.js"].includes("installAppButton")],
+  ["app requests signup verification email", contents["app.js"].includes("/api/auth/signup-code")],
+  ["app preserves pending signup credentials", contents["app.js"].includes("pendingSignup?.password")],
+  ["server normalizes pasted verification codes", contents["server.js"].includes("normalizeVerificationCode")],
+  ["server sends signup verification email", contents["server.js"].includes('url.pathname === "/api/auth/signup-code"')],
+  ["app surfaces Kakao map errors", contents["app.js"].includes("renderMapStatus")]
 ];
 
 const failures = assertions.filter(([, passed]) => !passed);
