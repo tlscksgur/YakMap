@@ -96,6 +96,35 @@ const hospitals = await listHospitals({ region1: "서울특별시", region2: "�
 assert.equal(hospitals.source, "sample");
 assert.ok(hospitals.items.some((item) => item.type === "hospital"));
 
+globalThis.fetch = async () => ({
+  ok: true,
+  text: async () => `
+    <response><body><items>
+      <item>
+        <hpid>A1</hpid><dutyName>24시간 테스트약국</dutyName><dutyAddr>서울 중구</dutyAddr><dutyTel1>02-1111-1111</dutyTel1>
+        <wgs84Lat>37.5665</wgs84Lat><wgs84Lon>126.9780</wgs84Lon>
+        <dutyTime${new Date().getDay() || 7}s>0000</dutyTime${new Date().getDay() || 7}s>
+        <dutyTime${new Date().getDay() || 7}c>2359</dutyTime${new Date().getDay() || 7}c>
+      </item>
+      <item>
+        <hpid>A2</hpid><dutyName>마감 테스트약국</dutyName><dutyAddr>서울 중구</dutyAddr><dutyTel1>02-2222-2222</dutyTel1>
+        <wgs84Lat>37.5666</wgs84Lat><wgs84Lon>126.9781</wgs84Lon>
+        <dutyTime${new Date().getDay() || 7}s>0001</dutyTime${new Date().getDay() || 7}s>
+        <dutyTime${new Date().getDay() || 7}c>0002</dutyTime${new Date().getDay() || 7}c>
+      </item>
+    </items></body></response>`
+});
+const livePharmacies = await listPharmacies(
+  { region1: "서울특별시", region2: "중구" },
+  getRuntimeConfig({ NMC_PHARMACY_SERVICE_KEY: "test-service-key" })
+);
+globalThis.fetch = originalFetch;
+assert.equal(livePharmacies.source, "nmc");
+assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스트약국").open, true);
+assert.equal(livePharmacies.items.find((item) => item.name === "마감 테스트약국").open, false);
+assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스트약국").statusLabel, "영업 중");
+assert.equal(livePharmacies.items.find((item) => item.name === "마감 테스트약국").statusLabel, "영업 종료");
+
 const tokenResult = await registerFcmToken({ userId: "u1", token: "fcm_test" }, emptyConfig);
 assert.equal(tokenResult.source, "local");
 assert.equal(tokenResult.active, true);

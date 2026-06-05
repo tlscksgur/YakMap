@@ -17,7 +17,7 @@ npm start
 
 - 이메일 회원가입/로그인 흐름과 로그인 시 FCM 토큰 갱신
 - Supabase anon 키가 있으면 Auth 호출, service role 키가 있으면 서버에서 `users` 프로필/FCM 저장
-- 이미지 업로드 또는 OCR 텍스트 입력 후 약 이름 자동 매칭
+- 약 봉투/처방전을 카메라로 촬영해 OCR로 약 이름을 자동 추출하고 복약 스케줄 등록으로 연결
 - OpenRouter 키가 있으면 `openrouter/free` vision 라우터로 OCR 실호출, 실패하면 무료 vision 모델 재시도 후 추출 실패 안내
 - 식약처 e약은요 키가 있으면 일반의약품 실조회, 없으면 로컬 `medicine_cache` 샘플로 전문/일반 판별
 - 일반약은 약국, 전문약은 병원으로 이어지는 구매/진료 가이드

@@ -133,6 +133,7 @@ let runtimeConfig = {
 };
 let reminderInterval = null;
 let serviceWorkerRegistration = null;
+let ocrCameraStream = null;
 
 const app = document.querySelector("#app");
 const appHero = document.querySelector("#appHero");
@@ -503,8 +504,8 @@ function renderHome() {
     <section class="card">
       <div class="section-heading">
         <div>
-          <h2>OCR 약 봉투 스캔</h2>
-          <p>촬영 텍스트를 추출했다고 가정하고 자동 매칭합니다.</p>
+          <h2>OCR 약 등록</h2>
+          <p>약 봉투/처방전 이미지에서 약 이름을 추출하고 복약 스케줄에 등록합니다.</p>
         </div>
       </div>
       ${renderOcrPanel()}
@@ -551,8 +552,8 @@ function renderMap() {
   const holidayMode = isHolidayOrNight();
   const sourceStores = prioritizeHolidayConvenienceStores(sortStoresByDistance(state.mapPlaces.length ? state.mapPlaces : stores), holidayMode);
   const filteredByType = sourceStores.filter((store) => {
-    if (state.mapFilter === "all") return store.open;
-    return store.type === state.mapFilter && store.open;
+    if (state.mapFilter === "all") return true;
+    return store.type === state.mapFilter;
   });
   const filtered = filterStoresBySearch(filteredByType);
   const shouldRenderFallbackPins = !runtimeConfig.integrations?.kakaoMap?.configured
@@ -590,7 +591,7 @@ function renderMap() {
       </div>
       <div class="segmented" role="tablist" aria-label="상비약 필터" style="margin-top: 8px;">
         ${filterButton("store", "심야 편의점")}
-        ${filterButton("all", "전체 영업중")}
+        ${filterButton("all", "전체")}
       </div>
       <div class="map-panel" aria-label="주변 판매처 지도">
         <div id="kakaoMap" class="kakao-map"></div>
@@ -696,13 +697,19 @@ function renderMedicineCandidates(candidates) {
 function renderOcrPanel() {
   return `
     <div class="scan-drop">
-      <div class="field">
-        <label for="ocrImage">약 봉투/처방전 이미지</label>
-        <input id="ocrImage" type="file" accept="image/*" />
+      <div class="camera-capture">
+        <video id="ocrCameraPreview" class="ocr-camera-preview" autoplay playsinline muted hidden></video>
+        <canvas id="ocrCaptureCanvas" hidden></canvas>
+        <p class="muted">카메라로 약 봉투/처방전을 직접 촬영하면 약 이름을 자동 추출합니다.</p>
+        <div class="two-col">
+          <button class="secondary-button" type="button" id="startOcrCameraButton">카메라 켜기</button>
+          <button class="primary-button" type="button" id="captureOcrButton" disabled>촬영하고 OCR</button>
+        </div>
+        <button class="ghost-button" type="button" id="stopOcrCameraButton" disabled>카메라 끄기</button>
       </div>
       <div class="field">
         <label for="ocrText">추출된 텍스트</label>
-        <textarea id="ocrText" placeholder="이미지를 선택하면 OCR 결과가 여기에 자동으로 들어옵니다. 직접 입력도 가능합니다.">${escapeHtml(state.ocrText)}</textarea>
+        <textarea id="ocrText" placeholder="촬영하면 OCR 결과가 여기에 자동으로 들어옵니다. 직접 입력도 가능합니다.">${escapeHtml(state.ocrText)}</textarea>
       </div>
       <div class="two-col">
         <button class="secondary-button" type="button" id="useSampleOcrButton">샘플 입력</button>
@@ -860,6 +867,8 @@ function renderPin(store) {
 
 function renderStore(store) {
   const label = store.type === "hospital" ? "병원" : store.type === "store" ? "상비약 편의점" : "약국";
+  const statusLabel = storeStatusLabel(store);
+  const statusClass = store.open ? "general" : "closed";
   return `
     <article class="store-item">
       <div class="item-top">
@@ -867,7 +876,10 @@ function renderStore(store) {
           <h3>${store.name}</h3>
           <p>${store.address}</p>
         </div>
-        <span class="badge ${store.type === "hospital" ? "prescription" : "general"}">${label}</span>
+        <div class="badge-stack">
+          <span class="badge ${store.type === "hospital" ? "prescription" : "general"}">${label}</span>
+          <span class="badge ${statusClass}">${statusLabel}</span>
+        </div>
       </div>
       <p class="muted">${store.distance}km · ${store.hours} · ${store.phone}</p>
       <div class="action-row">
@@ -876,6 +888,11 @@ function renderStore(store) {
       </div>
     </article>
   `;
+}
+
+function storeStatusLabel(store) {
+  if (store.statusLabel) return store.statusLabel;
+  return store.open ? "영업 중" : "영업 종료";
 }
 
 function sortStoresByDistance(items) {
@@ -991,7 +1008,9 @@ async function renderLiveKakaoMap() {
       position: new window.kakao.maps.LatLng(place.lat, place.lng),
       title: place.name
     });
-    const info = new window.kakao.maps.InfoWindow({ content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}</div>` });
+    const info = new window.kakao.maps.InfoWindow({
+      content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}<br>${storeStatusLabel(place)} · ${escapeHtml(place.hours)}</div>`
+    });
     window.kakao.maps.event.addListener(marker, "click", () => info.open(map, marker));
   });
   state.apiStatus.kakao = "connected";
@@ -1089,9 +1108,9 @@ function bindViewEvents() {
     render();
   });
 
-  document.querySelector("#ocrImage")?.addEventListener("change", async () => {
-    await runOcrScan({ requireImage: true });
-  });
+  document.querySelector("#startOcrCameraButton")?.addEventListener("click", startOcrCamera);
+  document.querySelector("#captureOcrButton")?.addEventListener("click", captureOcrFrame);
+  document.querySelector("#stopOcrCameraButton")?.addEventListener("click", () => stopOcrCamera());
 
   document.querySelector("#scanOcrButton")?.addEventListener("click", async () => {
     await runOcrScan();
@@ -1211,7 +1230,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-store-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const store = [...state.mapPlaces, ...stores].find((item) => item.id === button.dataset.storeId);
-      toast(`${store.name} · ${store.distance}km · ${store.hours} · ${store.phone}`);
+      toast(`${store.name} · ${storeStatusLabel(store)} · ${store.distance}km · ${store.hours} · ${store.phone}`);
     });
   });
 
@@ -1227,19 +1246,13 @@ function bindViewEvents() {
   bindUtilityEvents();
 }
 
-async function runOcrScan({ requireImage = false } = {}) {
+async function runOcrScan({ imageBase64 = "" } = {}) {
   state.ocrText = document.querySelector("#ocrText").value;
-  const imageFile = document.querySelector("#ocrImage")?.files?.[0];
-  if (requireImage && !imageFile) {
-    toast("이미지 선택이 취소되었습니다.");
-    return;
-  }
-  if (imageFile) {
+  if (imageBase64) {
     state.ocrText = "";
     document.querySelector("#ocrText").value = "OCR 추출 중입니다...";
-    toast("이미지를 OCR로 분석 중입니다.");
+    toast("촬영 이미지를 OCR로 분석 중입니다.");
   }
-  const imageBase64 = imageFile ? await prepareImageForOcrDataUrl(imageFile) : "";
   let matches = extractMedicines(state.ocrText);
   try {
     const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
@@ -1260,6 +1273,64 @@ async function runOcrScan({ requireImage = false } = {}) {
   document.querySelector("#ocrText").value = state.ocrText;
   bindMedicineActionEvents(resultRoot);
   persist();
+}
+
+async function startOcrCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    toast("이 브라우저에서는 카메라 촬영을 사용할 수 없습니다.");
+    return;
+  }
+  if (!(await ensureCameraPermission())) return;
+  try {
+    stopOcrCamera({ silent: true });
+    ocrCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+    const preview = document.querySelector("#ocrCameraPreview");
+    preview.srcObject = ocrCameraStream;
+    preview.hidden = false;
+    await preview.play();
+    document.querySelector("#captureOcrButton").disabled = false;
+    document.querySelector("#stopOcrCameraButton").disabled = false;
+    toast("카메라가 켜졌습니다. 약 봉투/처방전을 화면에 맞춰 촬영하세요.");
+  } catch (error) {
+    ocrCameraStream = null;
+    toast(`카메라 실행 오류: ${error.message}`);
+  }
+}
+
+async function captureOcrFrame() {
+  const preview = document.querySelector("#ocrCameraPreview");
+  const canvas = document.querySelector("#ocrCaptureCanvas");
+  if (!ocrCameraStream || !preview?.videoWidth) {
+    toast("카메라가 준비되지 않았습니다. 카메라를 다시 켜주세요.");
+    return;
+  }
+  canvas.width = preview.videoWidth;
+  canvas.height = preview.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
+  const capturedImage = await prepareImageForOcrDataUrl(canvas.toDataURL("image/jpeg", 0.92));
+  stopOcrCamera({ silent: true });
+  await runOcrScan({ imageBase64: capturedImage });
+}
+
+function stopOcrCamera({ silent = false } = {}) {
+  if (ocrCameraStream) {
+    ocrCameraStream.getTracks().forEach((track) => track.stop());
+    ocrCameraStream = null;
+  }
+  const preview = document.querySelector("#ocrCameraPreview");
+  if (preview) {
+    preview.srcObject = null;
+    preview.hidden = true;
+  }
+  const captureButton = document.querySelector("#captureOcrButton");
+  const stopButton = document.querySelector("#stopOcrCameraButton");
+  if (captureButton) captureButton.disabled = true;
+  if (stopButton) stopButton.disabled = true;
+  if (!silent) toast("카메라를 껐습니다.");
 }
 
 function bindMedicineActionEvents(root) {
@@ -1673,9 +1744,9 @@ function readFileAsDataUrl(file) {
   });
 }
 
-async function prepareImageForOcrDataUrl(file) {
-  const originalDataUrl = await readFileAsDataUrl(file);
-  if (!file.type.startsWith("image/")) return originalDataUrl;
+async function prepareImageForOcrDataUrl(source) {
+  const originalDataUrl = typeof source === "string" ? source : await readFileAsDataUrl(source);
+  if (typeof source !== "string" && !source.type.startsWith("image/")) return originalDataUrl;
   try {
     const image = await loadImage(originalDataUrl);
     const targetWidth = Math.min(2400, Math.max(1600, image.naturalWidth));
