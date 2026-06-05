@@ -88,13 +88,26 @@ assert.equal(fallbackOcr.model, "openrouter/free");
 assert.match(fallbackOcr.warning, /이전 OCR 모델 실패/);
 assert.deepEqual(extractMedicineNameCandidates("록소프로펜정 60mg\n아침 식후"), ["록소프로펜정 60mg"]);
 
-const pharmacies = await listPharmacies({ region1: "서울특별시", region2: "중구" }, emptyConfig);
+const pharmacies = await listPharmacies({}, emptyConfig);
 assert.equal(pharmacies.source, "sample");
 assert.ok(pharmacies.items.some((item) => item.type === "pharmacy"));
 
-const hospitals = await listHospitals({ region1: "서울특별시", region2: "중구" }, emptyConfig);
+const hospitals = await listHospitals({}, emptyConfig);
 assert.equal(hospitals.source, "sample");
 assert.ok(hospitals.items.some((item) => item.type === "hospital"));
+
+let publicDataRequestUrl = null;
+globalThis.fetch = async (url) => {
+  publicDataRequestUrl = new URL(String(url));
+  return {
+    ok: true,
+    text: async () => "<response><body><items></items></body></response>"
+  };
+};
+await listPharmacies({}, getRuntimeConfig({ NMC_PHARMACY_SERVICE_KEY: "test-service-key" }));
+globalThis.fetch = originalFetch;
+assert.equal(publicDataRequestUrl.searchParams.has("Q0"), false);
+assert.equal(publicDataRequestUrl.searchParams.has("Q1"), false);
 
 globalThis.fetch = async () => ({
   ok: true,

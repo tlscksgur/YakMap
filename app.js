@@ -915,7 +915,10 @@ function isHolidayOrNight(date = new Date()) {
 }
 
 function filterStoresBySearch(items) {
-  const region = normalize(state.regionSearch);
+  const parsedRegion = parseRegionSearch(state.regionSearch);
+  const region = normalize(parsedRegion.region1 || parsedRegion.region2
+    ? `${parsedRegion.region1} ${parsedRegion.region2}`
+    : state.regionSearch);
   const storeName = normalize(state.storeSearch);
   return items.filter((store) => {
     const regionMatch = !region || normalize(`${store.address} ${store.name}`).includes(region);
@@ -926,7 +929,7 @@ function filterStoresBySearch(items) {
 
 async function loadStoresForFilter(filter) {
   try {
-    const params = "region1=서울특별시&region2=중구";
+    const params = mapApiSearchParams();
     if (filter === "hospital") {
       const hospitals = await apiGet(`/api/hospitals?${params}`);
       state.mapPlaces = hospitals.items || [];
@@ -1298,6 +1301,46 @@ async function startOcrCamera() {
     ocrCameraStream = null;
     toast(`카메라 실행 오류: ${error.message}`);
   }
+}
+
+function mapApiSearchParams() {
+  const params = new URLSearchParams({ limit: "50" });
+  const region = parseRegionSearch(state.regionSearch);
+  if (region.region1) params.set("region1", region.region1);
+  if (region.region2) params.set("region2", region.region2);
+  return params.toString();
+}
+
+function parseRegionSearch(value) {
+  const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return { region1: normalizeRegion1(parts[0]), region2: parts[1] };
+  if (parts[0] && /특별시|광역시|특별자치시|특별자치도|도$/.test(parts[0])) {
+    return { region1: normalizeRegion1(parts[0]), region2: "" };
+  }
+  return { region1: "", region2: "" };
+}
+
+function normalizeRegion1(value) {
+  const aliases = {
+    서울: "서울특별시",
+    부산: "부산광역시",
+    대구: "대구광역시",
+    인천: "인천광역시",
+    광주: "광주광역시",
+    대전: "대전광역시",
+    울산: "울산광역시",
+    세종: "세종특별자치시",
+    경기: "경기도",
+    강원: "강원특별자치도",
+    충북: "충청북도",
+    충남: "충청남도",
+    전북: "전북특별자치도",
+    전남: "전라남도",
+    경북: "경상북도",
+    경남: "경상남도",
+    제주: "제주특별자치도"
+  };
+  return aliases[value] || value;
 }
 
 async function captureOcrFrame() {

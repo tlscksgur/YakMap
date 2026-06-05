@@ -80,6 +80,7 @@ const assertions = [
   ["app supports selecting one medicine from candidates", contents["app.js"].includes("data-select-medicine")],
   ["app sorts stores by distance", contents["app.js"].includes("sortStoresByDistance")],
   ["app supports region map search", contents["app.js"].includes("regionSearchInput")],
+  ["app does not hardcode map API region to Seoul Jung-gu", !contents["app.js"].includes('region1=서울특별시&region2=중구')],
   ["app supports store name map search", contents["app.js"].includes("storeSearchInput")],
   ["app shows no map search results", contents["app.js"].includes("검색 조건에 맞는 판매처가 없습니다.")],
   ["app prioritizes convenience stores on holidays", contents["app.js"].includes("공휴일에는 상비약 판매 편의점을 우선 안내합니다.")],
