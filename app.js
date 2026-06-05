@@ -1,6 +1,7 @@
 import { getAuthErrorMessage } from "./lib/auth-errors.mjs";
 
 const STORAGE_KEY = "yak-map-state-v1";
+const SAMPLE_OCR_TEXT = "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분";
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -111,7 +112,7 @@ const defaultState = {
   storeSearch: "",
   editingScheduleId: null,
   apiStatus: {},
-  ocrText: "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분",
+  ocrText: "",
   locationLabel: "현재 위치 확인 전"
 };
 
@@ -168,7 +169,9 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (saved && typeof saved === "object") {
-      return { ...defaultState, ...saved };
+      const nextState = { ...defaultState, ...saved };
+      if (nextState.ocrText === SAMPLE_OCR_TEXT) nextState.ocrText = "";
+      return nextState;
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -699,11 +702,11 @@ function renderOcrPanel() {
       </div>
       <div class="field">
         <label for="ocrText">추출된 텍스트</label>
-        <textarea id="ocrText" placeholder="약 봉투 OCR 결과를 입력하거나 샘플을 사용하세요.">${escapeHtml(state.ocrText)}</textarea>
+        <textarea id="ocrText" placeholder="이미지를 선택하면 OCR 결과가 여기에 자동으로 들어옵니다. 직접 입력도 가능합니다.">${escapeHtml(state.ocrText)}</textarea>
       </div>
       <div class="two-col">
         <button class="secondary-button" type="button" id="useSampleOcrButton">샘플 입력</button>
-        <button class="primary-button" type="button" id="scanOcrButton">약 이름 매칭</button>
+        <button class="primary-button" type="button" id="scanOcrButton">OCR 다시 실행</button>
       </div>
     </div>
     <div class="result-list" id="ocrResults"></div>
@@ -1086,31 +1089,12 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("#ocrImage")?.addEventListener("change", async () => {
+    await runOcrScan({ requireImage: true });
+  });
+
   document.querySelector("#scanOcrButton")?.addEventListener("click", async () => {
-    if (!(await ensureCameraPermission())) return;
-    state.ocrText = document.querySelector("#ocrText").value;
-    const imageFile = document.querySelector("#ocrImage")?.files?.[0];
-    const imageBase64 = imageFile ? await readFileAsDataUrl(imageFile) : "";
-    let matches = extractMedicines(state.ocrText);
-    try {
-      const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
-      state.apiStatus.ocr = ocr.source === "openrouter-ocr" ? "connected" : "fallback";
-      state.ocrText = ocr.text || state.ocrText;
-      matches = ocr.medicines?.length
-        ? ocr.medicines
-        : ocrCandidateMedicines(ocr.extracted_names || []);
-      if (ocr.warning) toast(ocr.warning);
-    } catch (error) {
-      state.apiStatus.ocr = "error";
-      toast(`OCR API 오류: ${error.message}`);
-    }
-    const resultRoot = document.querySelector("#ocrResults");
-    resultRoot.innerHTML = matches.length
-      ? matches.map(renderMedicineResult).join("")
-      : `<div class="empty-state">인식 실패 또는 재촬영이 필요합니다.</div>`;
-    document.querySelector("#ocrText").value = state.ocrText;
-    bindMedicineActionEvents(resultRoot);
-    persist();
+    await runOcrScan();
   });
 
   document.querySelector("#useSampleOcrButton")?.addEventListener("click", () => {
@@ -1241,6 +1225,41 @@ function bindViewEvents() {
   document.querySelector("#logoutButton")?.addEventListener("click", () => logout());
 
   bindUtilityEvents();
+}
+
+async function runOcrScan({ requireImage = false } = {}) {
+  state.ocrText = document.querySelector("#ocrText").value;
+  const imageFile = document.querySelector("#ocrImage")?.files?.[0];
+  if (requireImage && !imageFile) {
+    toast("이미지 선택이 취소되었습니다.");
+    return;
+  }
+  if (imageFile) {
+    state.ocrText = "";
+    document.querySelector("#ocrText").value = "OCR 추출 중입니다...";
+    toast("이미지를 OCR로 분석 중입니다.");
+  }
+  const imageBase64 = imageFile ? await prepareImageForOcrDataUrl(imageFile) : "";
+  let matches = extractMedicines(state.ocrText);
+  try {
+    const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
+    state.apiStatus.ocr = ocr.source === "openrouter-ocr" ? "connected" : "fallback";
+    state.ocrText = ocr.text || "";
+    matches = ocr.medicines?.length
+      ? ocr.medicines
+      : ocrCandidateMedicines(ocr.extracted_names || []);
+    if (ocr.warning) toast(ocr.warning);
+  } catch (error) {
+    state.apiStatus.ocr = "error";
+    toast(`OCR API 오류: ${error.message}`);
+  }
+  const resultRoot = document.querySelector("#ocrResults");
+  resultRoot.innerHTML = matches.length
+    ? matches.map(renderMedicineResult).join("")
+    : `<div class="empty-state">인식 실패 또는 재촬영이 필요합니다.</div>`;
+  document.querySelector("#ocrText").value = state.ocrText;
+  bindMedicineActionEvents(resultRoot);
+  persist();
 }
 
 function bindMedicineActionEvents(root) {
@@ -1651,6 +1670,38 @@ function readFileAsDataUrl(file) {
     reader.addEventListener("load", () => resolve(String(reader.result || "")));
     reader.addEventListener("error", () => reject(reader.error || new Error("파일을 읽을 수 없습니다.")));
     reader.readAsDataURL(file);
+  });
+}
+
+async function prepareImageForOcrDataUrl(file) {
+  const originalDataUrl = await readFileAsDataUrl(file);
+  if (!file.type.startsWith("image/")) return originalDataUrl;
+  try {
+    const image = await loadImage(originalDataUrl);
+    const targetWidth = Math.min(2400, Math.max(1600, image.naturalWidth));
+    const scale = targetWidth / image.naturalWidth;
+    const targetHeight = Math.round(image.naturalHeight * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  } catch {
+    return originalDataUrl;
+  }
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image), { once: true });
+    image.addEventListener("error", () => reject(new Error("이미지를 처리할 수 없습니다.")), { once: true });
+    image.src = src;
   });
 }
 
