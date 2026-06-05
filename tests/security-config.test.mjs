@@ -22,7 +22,7 @@ assert.match(envExample, /SMTP_USER=/);
 assert.match(envExample, /SMTP_PASS=/);
 assert.match(envExample, /SMTP_FROM=/);
 assert.match(envExample, /OPENROUTER_API_KEY=/);
-assert.match(envExample, /OPENROUTER_OCR_MODEL=baidu\/qianfan-ocr-fast:free/);
+assert.match(envExample, /OPENROUTER_OCR_MODEL=openrouter\/free/);
 assert.match(envExample, /MFDS_EYAK_SERVICE_KEY=/);
 assert.match(envExample, /NMC_PHARMACY_SERVICE_KEY=/);
 assert.match(gitignore, /^\.env$/m);

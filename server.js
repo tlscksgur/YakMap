@@ -8,6 +8,7 @@ import { loadEnv } from "./lib/env.mjs";
 import {
   authWithSupabase,
   classifyMedicine,
+  extractMedicineNameCandidates,
   extractMedicineNames,
   extractTextFromImage,
   getRuntimeConfig,
@@ -69,9 +70,13 @@ async function handleApi(request, response, url) {
 
   if (request.method === "POST" && url.pathname === "/api/ocr") {
     const body = await readJson(request);
-    const ocr = await extractTextFromImage(body.imageBase64 || "", config);
-    const medicines = extractMedicineNames(`${ocr.text}\n${body.text || ""}`);
-    sendJson(response, 200, { ...ocr, medicines });
+    const ocr = body.imageBase64
+      ? await extractTextFromImage(body.imageBase64, config)
+      : { text: body.text || "", source: body.text ? "manual" : "empty" };
+    const combinedText = `${ocr.text}\n${body.text || ""}`;
+    const medicines = extractMedicineNames(combinedText);
+    const extractedNames = extractMedicineNameCandidates(combinedText);
+    sendJson(response, 200, { ...ocr, medicines, extracted_names: extractedNames });
     return;
   }
 

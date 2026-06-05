@@ -15,7 +15,7 @@ FIREBASE_APP_ID=
 FIREBASE_VAPID_KEY=
 KAKAO_MAP_JAVASCRIPT_KEY=
 OPENROUTER_API_KEY=
-OPENROUTER_OCR_MODEL=baidu/qianfan-ocr-fast:free
+OPENROUTER_OCR_MODEL=openrouter/free
 MFDS_EYAK_SERVICE_KEY=
 NMC_PHARMACY_SERVICE_KEY=
 ```
@@ -25,7 +25,7 @@ NMC_PHARMACY_SERVICE_KEY=
 | Current file/function | Production replacement |
 | --- | --- |
 | `server.js` `/api/medicine/search` | 식약처 e약은요 API 호출, 실패 시 샘플 fallback |
-| `server.js` `/api/ocr` | OpenRouter `baidu/qianfan-ocr-fast:free`, 실패 시 샘플 OCR fallback |
+| `server.js` `/api/ocr` | OpenRouter `openrouter/free` vision 라우터, 실패 시 무료 vision 모델 재시도 및 직접 입력 fallback |
 | `server.js` `/api/pharmacies` | 국립중앙의료원 약국 조회 API, 실패 시 샘플 약국/편의점 fallback |
 | `server.js` `/api/hospitals` | 국립중앙의료원 병·의원 찾기 API, 실패 시 샘플 병원 fallback |
 | `app.js` `loadKakaoMapSdk()` | 카카오맵 SDK 지도, 마커, 길찾기 링크 |

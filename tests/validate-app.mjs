@@ -44,6 +44,9 @@ const assertions = [
   ["SQL allows users own insert", contents["schema.sql"].includes('create policy "users_insert_own"')],
   ["server exposes config route", contents["server.js"].includes('url.pathname === "/api/config"')],
   ["providers include OpenRouter OCR", contents["lib/api-providers.mjs"].includes("OPENROUTER_CHAT_URL")],
+  ["providers use current OpenRouter free vision router", contents["lib/api-providers.mjs"].includes('DEFAULT_OPENROUTER_OCR_MODEL = "openrouter/free"')],
+  ["providers retry retired OpenRouter OCR models", contents["lib/api-providers.mjs"].includes("openRouterOcrModelCandidates")],
+  ["providers explain OpenRouter OCR rate limits", contents["lib/api-providers.mjs"].includes("OpenRouter 무료 OCR 사용량 제한입니다.")],
   ["app excludes Kakao login mock", !contents["app.js"].includes("kakaoMockButton")],
   ["app excludes demo login", !contents["app.js"].includes("startDemoSession")],
   ["app excludes install app action", !contents["app.js"].includes("installAppButton")],
@@ -76,6 +79,7 @@ const assertions = [
   ["app supports editing schedule times", contents["app.js"].includes("data-edit-schedule")],
   ["app supports editing schedule date range", contents["app.js"].includes("스케줄 수정 완료")],
   ["app handles camera permission denial", contents["app.js"].includes("카메라 권한이 필요합니다.")],
+  ["app shows unmatched OCR medicine candidates", contents["app.js"].includes("ocrCandidateMedicines") && contents["app.js"].includes("OCR에서 추출한 후보입니다.")],
   ["app persists newly fetched medicines", contents["app.js"].includes("persistMedicineCache")],
   ["app queues offline schedule saves", contents["app.js"].includes("pending_mutations")],
   ["app stores FCM tokens per device", contents["app.js"].includes("fcm_tokens") && contents["schema.sql"].includes("user_fcm_tokens")],
@@ -93,6 +97,7 @@ const assertions = [
   ["server sends signup verification email", contents["server.js"].includes('url.pathname === "/api/auth/signup-code"')],
   ["server sends password reset email", contents["server.js"].includes('url.pathname === "/api/auth/password-reset-code"')],
   ["server falls back after verified signup rate limits", contents["server.js"].includes("canFallbackAfterVerifiedSignup") && contents["server.js"].includes("Supabase 인증 요청 제한으로 앱 로컬 계정으로 가입을 완료했습니다.")],
+  ["server returns extracted OCR name candidates", contents["server.js"].includes("extractMedicineNameCandidates") && contents["server.js"].includes("extracted_names")],
   ["app surfaces Kakao map errors", contents["app.js"].includes("renderMapStatus")]
 ];
 

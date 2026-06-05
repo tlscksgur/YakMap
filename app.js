@@ -1096,7 +1096,9 @@ function bindViewEvents() {
       const ocr = await apiPost("/api/ocr", { imageBase64, text: state.ocrText });
       state.apiStatus.ocr = ocr.source === "openrouter-ocr" ? "connected" : "fallback";
       state.ocrText = ocr.text || state.ocrText;
-      matches = ocr.medicines?.length ? ocr.medicines : matches;
+      matches = ocr.medicines?.length
+        ? ocr.medicines
+        : ocrCandidateMedicines(ocr.extracted_names || []);
       if (ocr.warning) toast(ocr.warning);
     } catch (error) {
       state.apiStatus.ocr = "error";
@@ -1609,6 +1611,18 @@ function persistMedicineCache(medicine) {
   ];
   persist();
   return cached;
+}
+
+function ocrCandidateMedicines(names) {
+  return names.map((name) => ({
+    item_name: name,
+    aliases: [name],
+    category: "확인 필요",
+    is_prescription: false,
+    efficacy: "OCR에서 추출한 후보입니다. 식약처 검색으로 정확한 분류를 확인하세요.",
+    side_effects: "약사 또는 의사에게 확인한 뒤 복용하세요.",
+    usage: ""
+  }));
 }
 
 function normalize(value) {

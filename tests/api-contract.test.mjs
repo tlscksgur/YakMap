@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   buildPublicDataUrl,
   classifyMedicine,
+  extractMedicineNameCandidates,
   extractTextFromImage,
   getRuntimeConfig,
   listHospitals,
@@ -13,7 +14,7 @@ const emptyConfig = getRuntimeConfig({});
 
 assert.equal(emptyConfig.integrations.mfds.configured, false);
 assert.equal(emptyConfig.integrations.openRouterOcr.configured, false);
-assert.equal(emptyConfig.integrations.openRouterOcr.model, "baidu/qianfan-ocr-fast:free");
+assert.equal(emptyConfig.integrations.openRouterOcr.model, "openrouter/free");
 assert.equal(emptyConfig.integrations.kakaoMap.configured, false);
 
 const medicine = await classifyMedicine("타이레놀", emptyConfig);
@@ -56,10 +57,36 @@ globalThis.fetch = originalFetch;
 assert.equal(liveOcr.source, "openrouter-ocr");
 assert.match(liveOcr.text, /타이레놀정500mg/);
 assert.equal(String(openRouterRequest.url), "https://openrouter.ai/api/v1/chat/completions");
-assert.equal(openRouterRequest.body.model, "baidu/qianfan-ocr-fast:free");
+assert.equal(openRouterRequest.body.model, "openrouter/free");
 assert.equal(openRouterRequest.body.messages[0].content[1].type, "image_url");
 assert.equal(openRouterRequest.body.messages[0].content[1].image_url.url, "data:image/png;base64,dGVzdA==");
 assert.match(openRouterRequest.options.headers.authorization, /^Bearer test-openrouter-key$/);
+
+let ocrAttempt = 0;
+globalThis.fetch = async (url, options) => {
+  ocrAttempt += 1;
+  const body = JSON.parse(options.body);
+  if (ocrAttempt === 1) {
+    return {
+      ok: false,
+      status: 404,
+      text: async () => JSON.stringify({ error: { message: "model not found" } })
+    };
+  }
+  return {
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: "록소프로펜정 60mg" } }] })
+  };
+};
+const fallbackOcr = await extractTextFromImage(
+  "data:image/png;base64,dGVzdA==",
+  getRuntimeConfig({ OPENROUTER_API_KEY: "test-openrouter-key", OPENROUTER_OCR_MODEL: "baidu/qianfan-ocr-fast:free" })
+);
+globalThis.fetch = originalFetch;
+assert.equal(ocrAttempt, 2);
+assert.equal(fallbackOcr.model, "openrouter/free");
+assert.match(fallbackOcr.warning, /이전 OCR 모델 실패/);
+assert.deepEqual(extractMedicineNameCandidates("록소프로펜정 60mg\n아침 식후"), ["록소프로펜정 60mg"]);
 
 const pharmacies = await listPharmacies({ region1: "서울특별시", region2: "중구" }, emptyConfig);
 assert.equal(pharmacies.source, "sample");
