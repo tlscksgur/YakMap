@@ -113,7 +113,8 @@ const defaultState = {
   editingScheduleId: null,
   apiStatus: {},
   ocrText: "",
-  locationLabel: "현재 위치 확인 전"
+  locationLabel: "현재 위치 확인 전",
+  currentPosition: null
 };
 
 let state = loadState();
@@ -143,7 +144,10 @@ document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", async () => {
     state.selectedTab = button.dataset.tab;
     persist();
-    if (state.selectedTab === "map") await loadStoresForFilter(state.mapFilter);
+    if (state.selectedTab === "map") {
+      if (!state.currentPosition) locateUser();
+      await loadStoresForFilter(state.mapFilter);
+    }
     render();
   });
 });
@@ -881,7 +885,7 @@ function renderStore(store) {
           <span class="badge ${statusClass}">${statusLabel}</span>
         </div>
       </div>
-      <p class="muted">${store.distance}km · ${store.hours} · ${store.phone}</p>
+      <p class="muted">${formatStoreDistance(store)} · ${store.hours} · ${store.phone}</p>
       <div class="action-row">
         <button class="secondary-button" type="button" data-route="${store.id}">길찾기 앱 열기</button>
         <button class="text-button" type="button" data-call="${store.id}">전화 걸기</button>
@@ -896,7 +900,47 @@ function storeStatusLabel(store) {
 }
 
 function sortStoresByDistance(items) {
-  return [...items].sort((a, b) => Number(a.distance || 0) - Number(b.distance || 0));
+  return [...items].sort((a, b) => {
+    const distanceA = storeDistanceKm(a);
+    const distanceB = storeDistanceKm(b);
+    return (distanceA ?? Number.MAX_SAFE_INTEGER) - (distanceB ?? Number.MAX_SAFE_INTEGER);
+  });
+}
+
+function formatStoreDistance(store) {
+  const distance = storeDistanceKm(store);
+  if (distance === null) return "거리 확인 전";
+  const rounded = distance < 10 ? distance.toFixed(1).replace(/\.0$/, "") : String(Math.round(distance));
+  return `${rounded}km`;
+}
+
+function storeDistanceKm(store) {
+  if (
+    state.currentPosition
+    && Number.isFinite(Number(state.currentPosition.lat))
+    && Number.isFinite(Number(state.currentPosition.lng))
+    && Number.isFinite(Number(store.lat))
+    && Number.isFinite(Number(store.lng))
+  ) {
+    return haversineDistanceKm(state.currentPosition, store);
+  }
+  const distance = Number(store.distance);
+  return Number.isFinite(distance) && distance > 0 ? distance : null;
+}
+
+function haversineDistanceKm(from, to) {
+  const earthRadiusKm = 6371;
+  const fromLat = toRadians(Number(from.lat));
+  const toLat = toRadians(Number(to.lat));
+  const deltaLat = toRadians(Number(to.lat) - Number(from.lat));
+  const deltaLng = toRadians(Number(to.lng) - Number(from.lng));
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(degrees) {
+  return degrees * Math.PI / 180;
 }
 
 function prioritizeHolidayConvenienceStores(items, holidayMode = isHolidayOrNight()) {
@@ -1001,9 +1045,21 @@ async function renderLiveKakaoMap() {
   if (!loaded) return;
 
   const places = state.mapPlaces.length ? state.mapPlaces : stores;
-  const center = new window.kakao.maps.LatLng(places[0]?.lat || 37.5665, places[0]?.lng || 126.978);
+  const centerPosition = state.currentPosition || places[0] || { lat: 37.5665, lng: 126.978 };
+  const center = new window.kakao.maps.LatLng(centerPosition.lat, centerPosition.lng);
   const map = new window.kakao.maps.Map(mapRoot, { center, level: 5 });
   mapRoot.closest(".map-panel")?.classList.add("has-live-map");
+  if (state.currentPosition) {
+    const currentMarker = new window.kakao.maps.Marker({
+      map,
+      position: new window.kakao.maps.LatLng(state.currentPosition.lat, state.currentPosition.lng),
+      title: "내 위치"
+    });
+    const currentInfo = new window.kakao.maps.InfoWindow({
+      content: `<div style="padding:6px 8px;font-size:12px;">내 위치</div>`
+    });
+    window.kakao.maps.event.addListener(currentMarker, "click", () => currentInfo.open(map, currentMarker));
+  }
   places.forEach((place) => {
     if (!place.lat || !place.lng) return;
     const marker = new window.kakao.maps.Marker({
@@ -1233,7 +1289,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-store-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const store = [...state.mapPlaces, ...stores].find((item) => item.id === button.dataset.storeId);
-      toast(`${store.name} · ${storeStatusLabel(store)} · ${store.distance}km · ${store.hours} · ${store.phone}`);
+      toast(`${store.name} · ${storeStatusLabel(store)} · ${formatStoreDistance(store)} · ${store.hours} · ${store.phone}`);
     });
   });
 
@@ -1481,6 +1537,7 @@ async function authenticate(email, password, { verificationCode = "", passwordCo
     remoteSession = auth.session || null;
     remoteUser.access_token = remoteSession?.access_token || "";
     state.apiStatus.auth = auth.source === "supabase" ? "connected" : "fallback";
+    if (auth.warning) toast(`프로필 저장 경고: ${auth.warning}`);
   } catch (error) {
     if (await recoverFromAuthError(error, email, password, existingUser)) {
       return;
@@ -1493,6 +1550,13 @@ async function authenticate(email, password, { verificationCode = "", passwordCo
       remoteUser = existingUser;
       remoteSession = null;
       state.apiStatus.auth = "fallback";
+    } else if (state.authMode === "signup" && isSignupCodeResetRequired(error.message)) {
+      pendingSignup = null;
+      state.apiStatus.auth = "error";
+      persist();
+      render();
+      toast(getAuthErrorMessage(state.authMode, error.message));
+      return;
     } else {
       state.apiStatus.auth = "error";
       toast(getAuthErrorMessage(state.authMode, error.message) || `인증 API 오류: ${error.message}`);
@@ -1570,6 +1634,14 @@ function isAlreadyRegisteredAuthError(message) {
     || value.includes("user already")
     || value.includes("already exists")
     || value.includes("already been registered");
+}
+
+function isSignupCodeResetRequired(message) {
+  const value = String(message || "").toLowerCase();
+  return value.includes("인증코드를 먼저")
+    || value.includes("인증코드가 만료")
+    || value.includes("verification code first")
+    || value.includes("verification code expired");
 }
 
 function makeLocalAuthUser(email) {
@@ -2056,11 +2128,16 @@ function locateUser() {
   }
   navigator.geolocation.getCurrentPosition(
     (position) => {
+      state.currentPosition = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
       state.locationLabel = `현재 위치 ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
       persist();
       render();
     },
     () => {
+      state.currentPosition = null;
       state.locationLabel = "위치 권한이 없어 샘플 위치를 사용합니다.";
       persist();
       render();

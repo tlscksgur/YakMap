@@ -76,12 +76,79 @@ const rateLimitError = new AuthProviderError("email rate limit exceeded", 429);
 assert.equal(rateLimitError.message, "email rate limit exceeded");
 assert.equal(rateLimitError.status, 429);
 
+calls.length = 0;
+let profileAttempt = 0;
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url: String(url), options });
+  if (String(url).includes("/auth/v1/token")) {
+    return jsonResponse(200, {
+      user: {
+        id: "00000000-0000-4000-8000-000000000002",
+        email: "login@yakmap.test",
+        created_at: "2026-06-01T00:00:00.000Z"
+      },
+      access_token: "login-access-token"
+    });
+  }
+
+  if (String(url).includes("/rest/v1/users")) {
+    profileAttempt += 1;
+    if (profileAttempt === 1) {
+      return textResponse(400, { message: "Could not find the 'deleted_at' column of 'users'" });
+    }
+    return jsonResponse(201, []);
+  }
+
+  return jsonResponse(404, { error: "unexpected URL" });
+};
+
+try {
+  const loginResult = await authWithSupabase("login", {
+    email: "login@yakmap.test",
+    password: "Yakmap-test-12345"
+  }, {
+    supabaseUrl: "https://project.supabase.co",
+    supabaseAnonKey: "publishable-key",
+    supabaseServiceRoleKey: "",
+    integrations: { supabase: { configured: true } }
+  });
+
+  assert.equal(loginResult.source, "supabase");
+  assert.equal(loginResult.user.email, "login@yakmap.test");
+  assert.match(loginResult.warning, /minimal profile/);
+
+  const profileCalls = calls.filter((call) => call.url.includes("/rest/v1/users"));
+  assert.equal(profileCalls.length, 2);
+  assert.deepEqual(JSON.parse(profileCalls[1].options.body), {
+    id: "00000000-0000-4000-8000-000000000002",
+    email: "login@yakmap.test"
+  });
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 console.log("PASS supabase profile");
 
 function jsonResponse(status, payload) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    async text() {
+      return JSON.stringify(payload);
+    },
+    async json() {
+      return payload;
+    }
+  };
+}
+
+function textResponse(status, payload) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify(payload);
+    },
     async json() {
       return payload;
     }

@@ -26,4 +26,14 @@ assert.equal(
   "Supabase 이메일 확인이 필요합니다. 앱 인증코드로 계정을 복구하세요."
 );
 
+assert.equal(
+  getAuthErrorMessage("signup", "인증코드를 먼저 이메일로 받아야 합니다."),
+  "인증코드를 다시 이메일로 받아야 합니다. 인증코드 발송 버튼을 다시 눌러주세요."
+);
+
+assert.equal(
+  getAuthErrorMessage("signup", "인증코드가 만료되었습니다. 다시 요청하세요."),
+  "인증코드가 만료되었습니다. 다시 요청하세요."
+);
+
 console.log("PASS auth errors");

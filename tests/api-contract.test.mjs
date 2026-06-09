@@ -137,6 +137,7 @@ assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스�
 assert.equal(livePharmacies.items.find((item) => item.name === "마감 테스트약국").open, false);
 assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스트약국").statusLabel, "영업 중");
 assert.equal(livePharmacies.items.find((item) => item.name === "마감 테스트약국").statusLabel, "영업 종료");
+assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스트약국").distance, null);
 
 const tokenResult = await registerFcmToken({ userId: "u1", token: "fcm_test" }, emptyConfig);
 assert.equal(tokenResult.source, "local");
