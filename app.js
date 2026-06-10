@@ -111,6 +111,7 @@ const defaultState = {
   medicineCandidates: [],
   mapFilter: "pharmacy",
   mapPlaces: [],
+  kakaoNearbySearchKey: "",
   regionSearch: "",
   storeSearch: "",
   editingScheduleId: null,
@@ -959,6 +960,10 @@ function fallbackToUnfilteredStores(sourceStores, nearbyStores) {
   return sourceStores;
 }
 
+function resetNearbyKakaoSearch() {
+  state.kakaoNearbySearchKey = "";
+}
+
 function filterNearbyStores(items) {
   if (!state.currentPosition) return items;
   return items.filter((store) => {
@@ -1160,6 +1165,83 @@ async function renderLiveKakaoMap() {
   });
   state.apiStatus.kakao = "connected";
   setMapStatus("");
+  loadNearbyKakaoPlaces(map);
+}
+
+async function loadNearbyKakaoPlaces(map) {
+  if (!state.currentPosition || !window.kakao?.maps?.services?.Places) return;
+  const searchKey = `${state.mapFilter}:${state.currentPosition.lat.toFixed(4)},${state.currentPosition.lng.toFixed(4)}:${state.regionSearch}:${state.storeSearch}`;
+  if (state.kakaoNearbySearchKey === searchKey) return;
+
+  const center = new window.kakao.maps.LatLng(state.currentPosition.lat, state.currentPosition.lng);
+  const places = new window.kakao.maps.services.Places(map);
+  const results = await Promise.all(kakaoNearbyKeywords(state.mapFilter).map(({ keyword, type }) => {
+    return searchKakaoKeyword(places, keyword, type, center);
+  }));
+  const nearbyPlaces = dedupeStores(results.flat()).slice(0, MAX_VISIBLE_STORES);
+  state.kakaoNearbySearchKey = searchKey;
+  if (!nearbyPlaces.length) return;
+
+  state.mapPlaces = nearbyPlaces;
+  state.apiStatus.stores = "kakao";
+  persist();
+  render();
+}
+
+function kakaoNearbyKeywords(filter) {
+  if (filter === "pharmacy") return [{ keyword: "약국", type: "pharmacy" }];
+  if (filter === "hospital") return [{ keyword: "병원", type: "hospital" }];
+  if (filter === "store") return [{ keyword: "편의점", type: "store" }];
+  return [
+    { keyword: "약국", type: "pharmacy" },
+    { keyword: "병원", type: "hospital" },
+    { keyword: "편의점", type: "store" }
+  ];
+}
+
+function searchKakaoKeyword(places, keyword, type, center) {
+  return new Promise((resolve) => {
+    places.keywordSearch(keyword, (data, status) => {
+      if (status !== window.kakao.maps.services.Status.OK) {
+        resolve([]);
+        return;
+      }
+      resolve(data.map((place) => normalizeKakaoPlace(place, type)));
+    }, {
+      location: center,
+      radius: NEARBY_RADIUS_KM * 1000,
+      size: 15,
+      sort: window.kakao.maps.services.SortBy.DISTANCE
+    });
+  });
+}
+
+function normalizeKakaoPlace(place, type) {
+  return {
+    id: `kakao-${type}-${place.id}`,
+    type,
+    name: place.place_name || (type === "store" ? "이름 미상 편의점" : "이름 미상 판매처"),
+    address: place.road_address_name || place.address_name || "",
+    phone: place.phone || "",
+    distance: place.distance ? Number(place.distance) / 1000 : null,
+    open: true,
+    statusLabel: "영업정보 없음",
+    hours: "영업정보 없음",
+    lat: Number(place.y),
+    lng: Number(place.x),
+    x: 50,
+    y: 50
+  };
+}
+
+function dedupeStores(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.type}:${normalize(item.name)}:${normalize(item.address)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function renderMapStatus() {
@@ -1309,6 +1391,7 @@ function bindViewEvents() {
     event.preventDefault();
     state.regionSearch = document.querySelector("#regionSearchInput").value.trim();
     state.storeSearch = document.querySelector("#storeSearchInput").value.trim();
+    resetNearbyKakaoSearch();
     persist();
     await loadStoresForFilter(state.mapFilter);
     render();
@@ -1354,6 +1437,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-map-filter]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.mapFilter = button.dataset.mapFilter;
+      resetNearbyKakaoSearch();
       persist();
       await loadStoresForFilter(state.mapFilter);
       render();
@@ -1389,6 +1473,7 @@ function bindViewEvents() {
 
   document.querySelector("#locateButton")?.addEventListener("click", locateUser);
   document.querySelector("#refreshStoresButton")?.addEventListener("click", async () => {
+    resetNearbyKakaoSearch();
     await loadStoresForFilter(state.mapFilter);
     render();
     toast("판매처 정보를 갱신했습니다.");
@@ -2367,6 +2452,7 @@ function locateUser() {
         lat: position.coords.latitude,
         lng: position.coords.longitude
       };
+      resetNearbyKakaoSearch();
       state.locationPermissionDenied = false;
       state.locationLabel = `현재 위치 ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
       persist();
@@ -2374,6 +2460,7 @@ function locateUser() {
     },
     () => {
       state.currentPosition = null;
+      resetNearbyKakaoSearch();
       state.locationPermissionDenied = true;
       state.locationLabel = "위치 권한이 없어 샘플 위치를 사용합니다.";
       persist();
@@ -2385,6 +2472,7 @@ function locateUser() {
 
 function requestLocationOnAppLaunch() {
   state.currentPosition = null;
+  resetNearbyKakaoSearch();
   state.locationLabel = "위치 권한 확인 중입니다.";
   state.locationPermissionDenied = false;
   locateUser();
