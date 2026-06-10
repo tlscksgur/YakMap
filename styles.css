@@ -247,6 +247,16 @@ h1 {
   padding: 0 8px;
 }
 
+.time-preset {
+  border: 1px solid rgba(255, 123, 104, 0.28);
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 0 12px;
+  background: #fff4f1;
+  color: var(--primary-strong);
+  font-weight: 800;
+}
+
 .content {
   display: grid;
   gap: 16px;

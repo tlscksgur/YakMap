@@ -2,6 +2,8 @@ import { getAuthErrorMessage } from "./lib/auth-errors.mjs";
 
 const STORAGE_KEY = "yak-map-state-v1";
 const SAMPLE_OCR_TEXT = "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분";
+const MAX_VISIBLE_STORES = 20;
+const NEARBY_RADIUS_KM = 3;
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -99,6 +101,7 @@ const defaultState = {
   currentUserId: null,
   schedules: [],
   dose_records: [],
+  in_app_notifications: [],
   pending_mutations: [],
   notification_failures: [],
   medicine_cache: [],
@@ -475,7 +478,7 @@ function renderAuth() {
 function renderHome() {
   const schedules = userSchedules();
   const dueToday = schedules.filter((schedule) => isWithinSchedule(schedule, today));
-  const lowStock = schedules.filter((schedule) => schedule.remaining_pills <= schedule.dosage_times.length);
+  const lowStock = schedules.filter((schedule) => schedule.remaining_pills <= dailyDoseAmount(schedule));
   const next = nextDose(dueToday);
 
   return `
@@ -494,6 +497,8 @@ function renderHome() {
       <div class="metric"><strong>${schedules.length}</strong><span>등록 약</span></div>
       <div class="metric"><strong>${lowStock.length}</strong><span>재구매 필요</span></div>
     </section>
+
+    ${renderInAppNotifications()}
 
     <section class="card">
       <div class="section-heading">
@@ -554,24 +559,20 @@ function renderMeds() {
 
 function renderMap() {
   const holidayMode = isHolidayOrNight();
-  const sourceStores = prioritizeHolidayConvenienceStores(sortStoresByDistance(state.mapPlaces.length ? state.mapPlaces : stores), holidayMode);
-  const filteredByType = sourceStores.filter((store) => {
-    if (state.mapFilter === "all") return true;
-    return store.type === state.mapFilter;
-  });
-  const filtered = filterStoresBySearch(filteredByType);
+  const filtered = visibleStoresForMap(holidayMode);
   const shouldRenderFallbackPins = !runtimeConfig.integrations?.kakaoMap?.configured
     || state.apiStatus.kakao === "error"
     || state.apiStatus.kakao === "fallback";
   const nightNotice = filtered.length
     ? ""
-    : `<div class="card empty-state">${state.regionSearch || state.storeSearch ? "검색 조건에 맞는 판매처가 없습니다." : "영업 중인 약국이 부족합니다. 심야에는 24시간 상비약 판매처 또는 응급의료 안내를 확인하세요."}</div>`;
+    : `<div class="card empty-state">${emptyStoreMessage()}</div>`;
 
   return `
     <section class="section-heading">
       <div>
         <h2>스마트 길찾기</h2>
         <p>${holidayMode ? "공휴일에는 상비약 판매 편의점을 우선 안내합니다." : state.locationLabel}</p>
+        <p class="muted">${state.currentPosition ? "내 위치 마커 표시됨" : "현재 위치를 확인하면 반경 3km 판매처만 표시합니다."}</p>
       </div>
       <button class="text-button" type="button" id="locateButton">위치 확인</button>
     </section>
@@ -756,9 +757,11 @@ function renderScheduleForm(prefill = "") {
       category: state.selectedMedicine?.category || "확인 필요"
     });
   }
-  const medicineOptions = options
+  const medicineOptions = [
+    `<option value="">약을 선택하세요</option>`,
+    ...options
     .map((medicine) => `<option value="${medicine.item_name}" ${medicine.item_name === selectedName ? "selected" : ""}>${medicine.item_name}</option>`)
-    .join("");
+  ].join("");
 
   return `
     <form class="form-grid" id="scheduleForm">
@@ -769,6 +772,11 @@ function renderScheduleForm(prefill = "") {
       <div class="field">
         <label for="dosageTimes">복용 시간</label>
         <input id="dosageTimes" type="text" value="${editing ? editing.dosage_times.join(", ") : "09:00, 13:00, 19:00"}" placeholder="09:00, 13:00, 19:00" required />
+        <div class="pill-row" aria-label="복용 시간 빠른 선택">
+          <button class="time-preset" type="button" data-time-preset="09:00">아침</button>
+          <button class="time-preset" type="button" data-time-preset="13:00">점심</button>
+          <button class="time-preset" type="button" data-time-preset="19:00">저녁</button>
+        </div>
       </div>
       <div class="two-col">
         <div class="field">
@@ -783,6 +791,10 @@ function renderScheduleForm(prefill = "") {
       <div class="field">
         <label for="remainingPills">남은 알약 수</label>
         <input id="remainingPills" type="number" min="1" value="${editing?.remaining_pills || 9}" required />
+      </div>
+      <div class="field">
+        <label for="doseAmount">1회 복용량</label>
+        <input id="doseAmount" type="number" min="1" max="99" value="${editing?.dose_amount || 1}" required />
       </div>
       <div class="action-row">
         <button class="primary-button" type="submit">${editing ? "스케줄 수정" : "스케줄 등록"}</button>
@@ -806,7 +818,7 @@ function renderScheduleList(schedules, allowCheck) {
 
 function renderSchedule(schedule, allowCheck) {
   const remainingRatio = Math.max(0, Math.min(100, (schedule.remaining_pills / schedule.initial_pills) * 100));
-  const low = schedule.remaining_pills <= schedule.dosage_times.length;
+  const low = schedule.remaining_pills <= dailyDoseAmount(schedule);
   return `
     <article class="schedule-item">
       <div class="item-top">
@@ -823,7 +835,7 @@ function renderSchedule(schedule, allowCheck) {
       <div class="progress" aria-label="잔여 알약 ${schedule.remaining_pills}개">
         <span style="--value: ${remainingRatio}%"></span>
       </div>
-      <p class="muted">남은 알약 ${schedule.remaining_pills}개</p>
+      <p class="muted">남은 알약 ${schedule.remaining_pills}개 · 1회 복용량 ${schedule.dose_amount || 1}개</p>
       <div class="action-row">
         ${allowCheck ? `<button class="primary-button" type="button" data-take="${schedule.id}" ${schedule.remaining_pills <= 0 ? "disabled" : ""}>복용 완료</button>` : ""}
         ${allowCheck ? `<button class="secondary-button" type="button" data-missed="${schedule.id}">미복용 기록</button>` : ""}
@@ -851,11 +863,35 @@ function renderDoseHistory() {
           ${records.slice(-5).reverse().map((record) => `
             <div class="store-item">
               <strong>${escapeHtml(record.medicine_name)}</strong>
-              <p class="muted">${record.date} · ${record.status === "taken" ? "복용 완료" : "미복용"}</p>
+              <p class="muted">${record.date} · ${record.dose_time || "시간 미지정"} · ${record.status === "taken" ? "복용 완료" : "미복용"} · ${record.dose_amount || 1}개</p>
             </div>
           `).join("")}
         </div>
       ` : `<div class="empty-state">아직 복용 기록이 없습니다.</div>`}
+    </section>
+  `;
+}
+
+function renderInAppNotifications() {
+  const notifications = (state.in_app_notifications || [])
+    .filter((item) => item.user_id === state.currentUserId)
+    .slice(-3)
+    .reverse();
+  if (!notifications.length) return "";
+  return `
+    <section class="card notice-card" aria-label="앱 내부 알림">
+      <div class="section-heading">
+        <div>
+          <h2>앱 내부 알림</h2>
+          <p>복용 시간이 도달한 알림입니다.</p>
+        </div>
+      </div>
+      ${notifications.map((item) => `
+        <div class="result-item">
+          <strong>${escapeHtml(item.medicine_name)}</strong>
+          <p class="muted">${item.date} · ${item.dose_time} 복용 시간입니다.</p>
+        </div>
+      `).join("")}
     </section>
   `;
 }
@@ -885,7 +921,7 @@ function renderStore(store) {
           <span class="badge ${statusClass}">${statusLabel}</span>
         </div>
       </div>
-      <p class="muted">${formatStoreDistance(store)} · ${store.hours} · ${store.phone}</p>
+      <p class="muted">${formatStoreDistance(store)} · ${storeHoursLabel(store)} · ${store.phone}</p>
       <div class="action-row">
         <button class="secondary-button" type="button" data-route="${store.id}">길찾기 앱 열기</button>
         <button class="text-button" type="button" data-call="${store.id}">전화 걸기</button>
@@ -896,7 +932,36 @@ function renderStore(store) {
 
 function storeStatusLabel(store) {
   if (store.statusLabel) return store.statusLabel;
+  if (!store.hours || store.hours === "영업정보 없음") return "영업정보 없음";
   return store.open ? "영업 중" : "영업 종료";
+}
+
+function storeHoursLabel(store) {
+  return store.hours || "영업정보 없음";
+}
+
+function visibleStoresForMap(holidayMode = isHolidayOrNight()) {
+  const sourceStores = prioritizeHolidayConvenienceStores(sortStoresByDistance(state.mapPlaces.length ? state.mapPlaces : stores), holidayMode);
+  const nearbyStores = filterNearbyStores(sourceStores);
+  const filteredByType = nearbyStores.filter((store) => {
+    if (state.mapFilter === "all") return true;
+    return store.type === state.mapFilter;
+  });
+  return filterStoresBySearch(filteredByType).slice(0, MAX_VISIBLE_STORES);
+}
+
+function filterNearbyStores(items) {
+  if (!state.currentPosition) return items;
+  return items.filter((store) => {
+    const distance = storeDistanceKm(store);
+    return distance !== null && distance <= NEARBY_RADIUS_KM;
+  });
+}
+
+function emptyStoreMessage() {
+  if (state.regionSearch || state.storeSearch) return "검색 조건에 맞는 판매처가 없습니다.";
+  if (state.currentPosition) return "반경 3km 이내 판매처가 없습니다.";
+  return "영업 중인 약국이 부족합니다. 심야에는 24시간 상비약 판매처 또는 응급의료 안내를 확인하세요.";
 }
 
 function sortStoresByDistance(items) {
@@ -910,6 +975,7 @@ function sortStoresByDistance(items) {
 function formatStoreDistance(store) {
   const distance = storeDistanceKm(store);
   if (distance === null) return "거리 확인 전";
+  if (distance < 1) return `${Math.max(1, Math.round(distance * 1000))}m`;
   const rounded = distance < 10 ? distance.toFixed(1).replace(/\.0$/, "") : String(Math.round(distance));
   return `${rounded}km`;
 }
@@ -1044,7 +1110,7 @@ async function renderLiveKakaoMap() {
   const loaded = await loadKakaoMapSdk();
   if (!loaded) return;
 
-  const places = state.mapPlaces.length ? state.mapPlaces : stores;
+  const places = visibleStoresForMap();
   const centerPosition = state.currentPosition || places[0] || { lat: 37.5665, lng: 126.978 };
   const center = new window.kakao.maps.LatLng(centerPosition.lat, centerPosition.lng);
   const map = new window.kakao.maps.Map(mapRoot, { center, level: 5 });
@@ -1068,7 +1134,7 @@ async function renderLiveKakaoMap() {
       title: place.name
     });
     const info = new window.kakao.maps.InfoWindow({
-      content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}<br>${storeStatusLabel(place)} · ${escapeHtml(place.hours)}</div>`
+      content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}<br>${storeStatusLabel(place)} · ${escapeHtml(storeHoursLabel(place))}</div>`
     });
     window.kakao.maps.event.addListener(marker, "click", () => info.open(map, marker));
   });
@@ -1182,6 +1248,13 @@ function bindViewEvents() {
   });
 
   document.querySelector("#scheduleForm")?.addEventListener("submit", handleScheduleSubmit);
+  document.querySelectorAll("[data-time-preset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = document.querySelector("#dosageTimes");
+      const nextTimes = normalizeDosageTimes(`${input.value}, ${button.dataset.timePreset}`);
+      input.value = nextTimes.join(", ");
+    });
+  });
   document.querySelector("#cancelScheduleEditButton")?.addEventListener("click", () => {
     state.editingScheduleId = null;
     persist();
@@ -1462,8 +1535,14 @@ function bindMedicineActionEvents(root) {
 }
 
 async function authenticate(email, password, { verificationCode = "", passwordConfirm = "", termsAgreed = false } = {}) {
-  if (!email || !password || password.length < 8) {
-    toast("이메일과 8자 이상 비밀번호를 입력하세요.");
+  if (!email) {
+    toast("이메일을 입력하세요.");
+    return;
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    toast(passwordError);
     return;
   }
 
@@ -1598,6 +1677,14 @@ async function authenticate(email, password, { verificationCode = "", passwordCo
   persist();
   render();
   toast(state.authMode === "signup" ? "계정 생성과 토큰 갱신을 처리했습니다." : "로그인하고 FCM 토큰을 갱신했습니다.");
+}
+
+function validatePassword(password) {
+  const value = String(password || "");
+  if (!value.trim()) return "비밀번호를 입력하세요.";
+  if (/\s/.test(value)) return "비밀번호에는 공백을 사용할 수 없습니다.";
+  if (value.length < 8) return "비밀번호는 8자 이상이어야 합니다.";
+  return "";
 }
 
 async function recoverFromAuthError(error, email, password, existingUser) {
@@ -1783,7 +1870,8 @@ function findMedicineCandidates(query) {
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .map((item) => item.medicine);
+    .map((item) => item.medicine)
+    .slice(0, 3);
 }
 
 async function lookupMedicineRemote(query) {
@@ -1907,18 +1995,42 @@ async function ensureCameraPermission() {
 
 function handleScheduleSubmit(event) {
   event.preventDefault();
-  const medicineName = document.querySelector("#scheduleMedicine").value;
+  const medicineName = document.querySelector("#scheduleMedicine").value.trim();
+  if (!medicineName) {
+    toast("약 이름을 입력하세요.");
+    return;
+  }
+
   const medicine = lookupMedicine(medicineName) || state.selectedMedicine;
-  const dosageTimes = document.querySelector("#dosageTimes").value
-    .split(",")
-    .map((time) => time.trim())
-    .filter(Boolean);
+  const dosageTimes = normalizeDosageTimes(document.querySelector("#dosageTimes").value);
   const startDate = document.querySelector("#startDate").value;
   const endDate = document.querySelector("#endDate").value;
-  const remainingPills = Number(document.querySelector("#remainingPills").value);
+  const remainingPillsValue = document.querySelector("#remainingPills").value;
+  const remainingPills = Number(remainingPillsValue);
+  const doseAmount = Number(document.querySelector("#doseAmount").value || 1);
 
-  if (!medicine || dosageTimes.length === 0 || !startDate || !endDate || remainingPills < 1) {
-    toast("스케줄 값을 다시 확인하세요.");
+  if (!medicine) {
+    toast("약 이름을 입력하세요.");
+    return;
+  }
+
+  if (dosageTimes.length === 0) {
+    toast("복용 시간을 입력하세요.");
+    return;
+  }
+
+  if (dosageTimes.length > 5) {
+    toast("하루 최대 5회까지 등록할 수 있습니다.");
+    return;
+  }
+
+  if (new Set(dosageTimes).size !== dosageTimes.length) {
+    toast("복용 시간이 중복되었습니다.");
+    return;
+  }
+
+  if (!startDate || !endDate) {
+    toast("복용 날짜를 입력하세요.");
     return;
   }
 
@@ -1927,7 +2039,32 @@ function handleScheduleSubmit(event) {
     return;
   }
 
+  if (remainingPillsValue === "") {
+    toast("남은 알약 수를 입력하세요.");
+    return;
+  }
+
+  if (!Number.isFinite(remainingPills) || remainingPills < 1) {
+    toast("남은 알약 수는 1 이상으로 입력하세요.");
+    return;
+  }
+
+  if (remainingPills > 999) {
+    toast("남은 알약 수는 999개 이하로 입력하세요.");
+    return;
+  }
+
+  if (!Number.isFinite(doseAmount) || doseAmount < 1) {
+    toast("1회 복용량은 1개 이상으로 입력하세요.");
+    return;
+  }
+
   const editing = state.schedules.find((item) => item.id === state.editingScheduleId);
+  if (!editing && userSchedules().some((schedule) => schedule.medicine_name === medicine.item_name)) {
+    toast("이미 등록된 약입니다.");
+    return;
+  }
+
   const nextSchedule = {
     id: editing?.id || Date.now(),
     user_id: state.currentUserId,
@@ -1937,6 +2074,7 @@ function handleScheduleSubmit(event) {
     start_date: startDate,
     end_date: endDate,
     remaining_pills: remainingPills,
+    dose_amount: doseAmount,
     initial_pills: Math.max(editing?.initial_pills || remainingPills, remainingPills),
     last_notified_at: editing?.last_notified_at || ""
   };
@@ -1978,6 +2116,14 @@ function flushPendingMutations() {
   toast("대기 중인 저장 작업을 재시도했습니다.");
 }
 
+function normalizeDosageTimes(value) {
+  return String(value || "")
+    .split(",")
+    .map((time) => time.trim())
+    .filter(Boolean)
+    .filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time));
+}
+
 function markDoseTaken(id) {
   const schedule = state.schedules.find((item) => item.id === id);
   if (!schedule) return;
@@ -1985,35 +2131,52 @@ function markDoseTaken(id) {
     toast("남은 약이 0개라 복용 체크를 할 수 없습니다. 재구매 또는 재방문이 필요합니다.");
     return;
   }
-  if (hasDoseRecord(schedule.id, today)) {
+  const doseTime = currentDoseSlot(schedule);
+  if (hasDoseRecord(schedule.id, today, doseTime)) {
     toast("이미 오늘 복용 기록이 있습니다.");
     return;
   }
-  schedule.remaining_pills = Math.max(0, schedule.remaining_pills - 1);
-  addDoseRecord(schedule, "taken");
+  const doseAmount = schedule.dose_amount || 1;
+  if (schedule.remaining_pills < doseAmount) {
+    toast("남은 약 수량이 1회 복용량보다 부족합니다.");
+    return;
+  }
+  schedule.remaining_pills = Math.max(0, schedule.remaining_pills - doseAmount);
+  addDoseRecord(schedule, "taken", doseTime);
   persist();
   render();
-  toast(schedule.remaining_pills <= schedule.dosage_times.length ? "복용 완료. 1일분 이하라 재구매가 필요합니다." : "복용 완료 처리했습니다.");
+  toast(schedule.remaining_pills <= dailyDoseAmount(schedule) ? "복용 완료. 1일분 이하라 재구매가 필요합니다." : "복용 완료 처리했습니다.");
 }
 
 function markDoseMissed(id) {
   const schedule = state.schedules.find((item) => item.id === id);
   if (!schedule) return;
-  if (hasDoseRecord(schedule.id, today)) {
+  const doseTime = currentDoseSlot(schedule);
+  if (hasDoseRecord(schedule.id, today, doseTime)) {
     toast("이미 오늘 복용 기록이 있습니다.");
     return;
   }
-  addDoseRecord(schedule, "missed");
+  addDoseRecord(schedule, "missed", doseTime);
   persist();
   render();
   toast("미복용 기록을 저장했습니다.");
 }
 
-function hasDoseRecord(scheduleId, date) {
-  return (state.dose_records || []).some((record) => record.schedule_id === scheduleId && record.date === date);
+function currentDoseSlot(schedule, now = new Date()) {
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const times = [...(schedule.dosage_times || [])].sort();
+  return times.find((time) => toMinutes(time) >= currentMinutes) || times.at(-1) || "시간 미지정";
 }
 
-function addDoseRecord(schedule, status) {
+function hasDoseRecord(scheduleId, date, doseTime = "") {
+  return (state.dose_records || []).some((record) => {
+    return record.schedule_id === scheduleId
+      && record.date === date
+      && (record.dose_time || "") === doseTime;
+  });
+}
+
+function addDoseRecord(schedule, status, doseTime) {
   state.dose_records = [
     ...(state.dose_records || []),
     {
@@ -2022,10 +2185,16 @@ function addDoseRecord(schedule, status) {
       schedule_id: schedule.id,
       medicine_name: schedule.medicine_name,
       date: today,
+      dose_time: doseTime,
+      dose_amount: schedule.dose_amount || 1,
       status,
       created_at: new Date().toISOString()
     }
   ];
+}
+
+function dailyDoseAmount(schedule) {
+  return (schedule.dosage_times?.length || 0) * (schedule.dose_amount || 1);
 }
 
 function deleteSchedule(id) {
@@ -2082,7 +2251,7 @@ function startReminderLoop() {
 }
 
 function checkDueReminders() {
-  if (!currentUser() || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (!currentUser()) return;
   const now = new Date();
   const hhmm = now.toTimeString().slice(0, 5);
   userSchedules().forEach((schedule) => {
@@ -2090,17 +2259,36 @@ function checkDueReminders() {
     const key = `${today}-${hhmm}`;
     if (schedule.dosage_times.includes(hhmm) && schedule.last_notified_at !== key) {
       schedule.last_notified_at = key;
+      addInAppNotification(schedule, hhmm);
       persist();
-      try {
-        new Notification("약-맵 복약 알림", {
-          body: `${schedule.medicine_name} 복용 시간입니다.`,
-          icon: "./assest/img/erd.webp"
-        });
-      } catch (error) {
-        logNotificationFailure(schedule, error);
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification("약-맵 복약 알림", {
+            body: `${schedule.medicine_name} 복용 시간입니다.`,
+            icon: "./assest/img/erd.webp"
+          });
+        } catch (error) {
+          logNotificationFailure(schedule, error);
+        }
       }
     }
   });
+}
+
+function addInAppNotification(schedule, doseTime) {
+  state.in_app_notifications = [
+    ...(state.in_app_notifications || []),
+    {
+      id: crypto.randomUUID(),
+      user_id: state.currentUserId,
+      schedule_id: schedule.id,
+      medicine_name: schedule.medicine_name,
+      date: today,
+      dose_time: doseTime,
+      created_at: new Date().toISOString()
+    }
+  ].slice(-20);
+  toast(`${schedule.medicine_name} 앱 내부 알림: 복용 시간입니다.`);
 }
 
 function logNotificationFailure(schedule, error) {
