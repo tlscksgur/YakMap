@@ -504,6 +504,14 @@ h1 {
   line-height: 1.45;
 }
 
+.permission-hint {
+  margin-top: 6px;
+  color: var(--primary-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .progress {
   height: 9px;
   background: #f2e9e0;

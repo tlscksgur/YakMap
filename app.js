@@ -117,7 +117,8 @@ const defaultState = {
   apiStatus: {},
   ocrText: "",
   locationLabel: "현재 위치 확인 전",
-  currentPosition: null
+  currentPosition: null,
+  locationPermissionDenied: false
 };
 
 let state = loadState();
@@ -169,6 +170,7 @@ async function boot() {
   await loadRuntimeConfig();
   validateCurrentSession();
   bindNetworkState();
+  requestLocationOnAppLaunch();
   render();
   startReminderLoop();
 }
@@ -573,6 +575,7 @@ function renderMap() {
         <h2>스마트 길찾기</h2>
         <p>${holidayMode ? "공휴일에는 상비약 판매 편의점을 우선 안내합니다." : state.locationLabel}</p>
         <p class="muted">${state.currentPosition ? "내 위치 마커 표시됨" : "현재 위치를 확인하면 반경 3km 판매처만 표시합니다."}</p>
+        ${state.locationPermissionDenied ? `<p class="permission-hint">위치 권한을 허용해주세요. 브라우저 주소창 왼쪽 권한 설정에서 위치 접근을 켤 수 있습니다.</p>` : ""}
       </div>
       <button class="text-button" type="button" id="locateButton">위치 확인</button>
     </section>
@@ -678,7 +681,7 @@ function renderMedicineSearch() {
       </div>
       <button class="primary-button" type="submit">전문/일반 판별</button>
     </form>
-    ${candidates.length > 1 ? renderMedicineCandidates(candidates) : ""}
+    ${candidates.length > 0 ? renderMedicineCandidates(candidates) : ""}
     ${selected ? renderMedicineResult(selected) : ""}
   `;
 }
@@ -757,17 +760,16 @@ function renderScheduleForm(prefill = "") {
       category: state.selectedMedicine?.category || "확인 필요"
     });
   }
-  const medicineOptions = [
-    `<option value="">약을 선택하세요</option>`,
-    ...options
-    .map((medicine) => `<option value="${medicine.item_name}" ${medicine.item_name === selectedName ? "selected" : ""}>${medicine.item_name}</option>`)
-  ].join("");
+  const medicineOptions = options
+    .map((medicine) => `<option value="${escapeHtml(medicine.item_name)}"></option>`)
+    .join("");
 
   return `
     <form class="form-grid" id="scheduleForm">
       <div class="field">
         <label for="scheduleMedicine">약 이름</label>
-        <select id="scheduleMedicine" required>${medicineOptions}</select>
+        <input id="scheduleMedicine" type="text" value="${escapeHtml(selectedName)}" list="scheduleMedicineNames" placeholder="약 이름 직접 입력" required />
+        <datalist id="scheduleMedicineNames">${medicineOptions}</datalist>
       </div>
       <div class="field">
         <label for="dosageTimes">복용 시간</label>
@@ -943,11 +945,18 @@ function storeHoursLabel(store) {
 function visibleStoresForMap(holidayMode = isHolidayOrNight()) {
   const sourceStores = prioritizeHolidayConvenienceStores(sortStoresByDistance(state.mapPlaces.length ? state.mapPlaces : stores), holidayMode);
   const nearbyStores = filterNearbyStores(sourceStores);
-  const filteredByType = nearbyStores.filter((store) => {
+  const displayStores = fallbackToUnfilteredStores(sourceStores, nearbyStores);
+  const filteredByType = displayStores.filter((store) => {
     if (state.mapFilter === "all") return true;
     return store.type === state.mapFilter;
   });
   return filterStoresBySearch(filteredByType).slice(0, MAX_VISIBLE_STORES);
+}
+
+function fallbackToUnfilteredStores(sourceStores, nearbyStores) {
+  if (!state.currentPosition) return nearbyStores;
+  if (nearbyStores.length > 0) return nearbyStores;
+  return sourceStores;
 }
 
 function filterNearbyStores(items) {
@@ -1040,6 +1049,7 @@ function filterStoresBySearch(items) {
 async function loadStoresForFilter(filter) {
   try {
     const params = mapApiSearchParams();
+    const convenienceStoreFallback = stores.filter((store) => store.type === "store");
     if (filter === "hospital") {
       const hospitals = await apiGet(`/api/hospitals?${params}`);
       state.mapPlaces = hospitals.items || [];
@@ -1047,13 +1057,23 @@ async function loadStoresForFilter(filter) {
       return;
     }
 
-    if (filter === "pharmacy" || filter === "store" || filter === "all") {
+    if (filter === "store") {
+      state.mapPlaces = convenienceStoreFallback;
+      state.apiStatus.stores = "fallback";
+      return;
+    }
+
+    if (filter === "pharmacy" || filter === "all") {
       const [pharmacies, hospitals] = await Promise.all([
         apiGet(`/api/pharmacies?${params}`),
         filter === "all" ? apiGet(`/api/hospitals?${params}`) : Promise.resolve({ items: [] })
       ]);
-      const places = [...(pharmacies.items || []), ...(hospitals.items || [])];
-      state.mapPlaces = filter === "store" ? places.filter((place) => place.type === "store") : places;
+      const places = [
+        ...(pharmacies.items || []),
+        ...(hospitals.items || []),
+        ...(filter === "all" ? convenienceStoreFallback : [])
+      ];
+      state.mapPlaces = places;
       state.apiStatus.stores = pharmacies.source === "nmc" || hospitals.source === "nmc" ? "connected" : "fallback";
     }
   } catch (error) {
@@ -1215,9 +1235,9 @@ function bindViewEvents() {
     const query = document.querySelector("#medicineSearch").value;
     const candidates = findMedicineCandidates(query);
     const medicine = await lookupMedicineRemote(query);
-    state.medicineCandidates = candidates;
     if (!medicine && candidates.length) {
-      state.selectedMedicine = candidates[0];
+      state.medicineCandidates = candidates;
+      state.selectedMedicine = null;
       persist();
       render();
       toast("유사한 약 후보를 표시했습니다.");
@@ -1228,6 +1248,7 @@ function bindViewEvents() {
       toast("검색 결과 없음");
       return;
     }
+    state.medicineCandidates = [];
     state.selectedMedicine = medicine;
     persist();
     render();
@@ -1866,12 +1887,38 @@ function findMedicineCandidates(query) {
       const fields = [medicine.item_name, ...(medicine.aliases || [])].map(normalize);
       const direct = fields.some((field) => field.includes(normalized) || normalized.includes(field));
       const partial = fields.some((field) => field.slice(0, Math.max(2, normalized.length)).includes(normalized.slice(0, 2)));
-      return { medicine, score: direct ? 2 : partial ? 1 : 0 };
+      const similarity = Math.max(...fields.map((field) => medicineNameSimilarity(normalized, field)));
+      return { medicine, score: direct ? 3 : similarity >= 0.55 ? 2 : partial ? 1 : 0, similarity };
     })
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || b.similarity - a.similarity)
     .map((item) => item.medicine)
     .slice(0, 3);
+}
+
+function medicineNameSimilarity(input, candidate) {
+  if (!input || !candidate) return 0;
+  if (candidate.includes(input) || input.includes(candidate)) return 1;
+  const base = candidate.length > input.length + 2 ? candidate.slice(0, input.length + 2) : candidate;
+  const distance = levenshteinDistance(input, base);
+  return 1 - distance / Math.max(input.length, base.length);
+}
+
+function levenshteinDistance(left, right) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
 }
 
 async function lookupMedicineRemote(query) {
@@ -2010,7 +2057,7 @@ function handleScheduleSubmit(event) {
   const doseAmount = Number(document.querySelector("#doseAmount").value || 1);
 
   if (!medicine) {
-    toast("약 이름을 입력하세요.");
+    toast("입력한 약을 찾을 수 없습니다. 검색 결과 없음");
     return;
   }
 
@@ -2320,18 +2367,27 @@ function locateUser() {
         lat: position.coords.latitude,
         lng: position.coords.longitude
       };
+      state.locationPermissionDenied = false;
       state.locationLabel = `현재 위치 ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`;
       persist();
       render();
     },
     () => {
       state.currentPosition = null;
+      state.locationPermissionDenied = true;
       state.locationLabel = "위치 권한이 없어 샘플 위치를 사용합니다.";
       persist();
       render();
     },
     { enableHighAccuracy: true, timeout: 5000 }
   );
+}
+
+function requestLocationOnAppLaunch() {
+  state.currentPosition = null;
+  state.locationLabel = "위치 권한 확인 중입니다.";
+  state.locationPermissionDenied = false;
+  locateUser();
 }
 
 function escapeHtml(value) {
