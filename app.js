@@ -4,6 +4,8 @@ const STORAGE_KEY = "yak-map-state-v1";
 const SAMPLE_OCR_TEXT = "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분";
 const MAX_VISIBLE_STORES = 20;
 const NEARBY_RADIUS_KM = 3;
+const REMINDER_GRACE_MINUTES = 5;
+const UPCOMING_NOTICE_MINUTES = 30;
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -501,7 +503,7 @@ function renderHome() {
       <div class="metric"><strong>${lowStock.length}</strong><span>재구매 필요</span></div>
     </section>
 
-    ${renderInAppNotifications()}
+    ${renderUpcomingReminderNotice(dueToday)}
 
     <section class="card">
       <div class="section-heading">
@@ -875,24 +877,21 @@ function renderDoseHistory() {
   `;
 }
 
-function renderInAppNotifications() {
-  const notifications = (state.in_app_notifications || [])
-    .filter((item) => item.user_id === state.currentUserId)
-    .slice(-3)
-    .reverse();
-  if (!notifications.length) return "";
+function renderUpcomingReminderNotice(schedules) {
+  const notices = upcomingReminderNotices(schedules).slice(0, 3);
+  if (!notices.length) return "";
   return `
-    <section class="card notice-card" aria-label="앱 내부 알림">
+    <section class="card notice-card" aria-label="곧 복용할 약">
       <div class="section-heading">
         <div>
-          <h2>앱 내부 알림</h2>
-          <p>복용 시간이 도달한 알림입니다.</p>
+          <h2>곧 복용할 약</h2>
+          <p>복용 시간 직전인 일정입니다.</p>
         </div>
       </div>
-      ${notifications.map((item) => `
+      ${notices.map((item) => `
         <div class="result-item">
           <strong>${escapeHtml(item.medicine_name)}</strong>
-          <p class="muted">${item.date} · ${item.dose_time} 복용 시간입니다.</p>
+          <p class="muted">${item.dose_time} · ${item.minutes_until}분 뒤 곧 복용할 예정입니다.</p>
         </div>
       `).join("")}
     </section>
@@ -2356,12 +2355,36 @@ function nextDose(schedules) {
       minutes: toMinutes(time)
     }));
   });
-  return candidates.find((dose) => dose.minutes >= currentMinutes) || candidates[0] || null;
+  const sorted = candidates.sort((a, b) => a.minutes - b.minutes);
+  return sorted.find((dose) => dose.minutes >= currentMinutes) || sorted[0] || null;
+}
+
+function upcomingReminderNotices(schedules, now = new Date()) {
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return schedules.flatMap((schedule) => {
+    return (schedule.dosage_times || []).map((time) => {
+      const doseMinutes = toMinutes(time);
+      return {
+        medicine_name: schedule.medicine_name,
+        dose_time: time,
+        minutes_until: doseMinutes - currentMinutes
+      };
+    });
+  })
+    .filter((item) => item.minutes_until > 0 && item.minutes_until <= UPCOMING_NOTICE_MINUTES)
+    .sort((a, b) => a.minutes_until - b.minutes_until);
 }
 
 function toMinutes(time) {
   const [hours, minutes] = time.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 async function requestNotificationPermission() {
@@ -2385,13 +2408,14 @@ function startReminderLoop() {
 function checkDueReminders() {
   if (!currentUser()) return;
   const now = new Date();
-  const hhmm = now.toTimeString().slice(0, 5);
+  const dateKey = localDateKey(now);
   userSchedules().forEach((schedule) => {
-    if (!isWithinSchedule(schedule, today)) return;
-    const key = `${today}-${hhmm}`;
-    if (schedule.dosage_times.includes(hhmm) && schedule.last_notified_at !== key) {
+    if (!isWithinSchedule(schedule, dateKey)) return;
+    dueReminderTimes(schedule, now).forEach((doseTime) => {
+      const key = `${dateKey}-${doseTime}`;
+      if (schedule.last_notified_at === key) return;
       schedule.last_notified_at = key;
-      addInAppNotification(schedule, hhmm);
+      addInAppNotification(schedule, doseTime, dateKey);
       persist();
       if ("Notification" in window && Notification.permission === "granted") {
         try {
@@ -2403,11 +2427,19 @@ function checkDueReminders() {
           logNotificationFailure(schedule, error);
         }
       }
-    }
+    });
   });
 }
 
-function addInAppNotification(schedule, doseTime) {
+function dueReminderTimes(schedule, now = new Date()) {
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return [...(schedule.dosage_times || [])].filter((time) => {
+    const doseMinutes = toMinutes(time);
+    return toMinutes(time) <= currentMinutes && currentMinutes - doseMinutes <= REMINDER_GRACE_MINUTES;
+  });
+}
+
+function addInAppNotification(schedule, doseTime, dateKey = localDateKey()) {
   state.in_app_notifications = [
     ...(state.in_app_notifications || []),
     {
@@ -2415,7 +2447,7 @@ function addInAppNotification(schedule, doseTime) {
       user_id: state.currentUserId,
       schedule_id: schedule.id,
       medicine_name: schedule.medicine_name,
-      date: today,
+      date: dateKey,
       dose_time: doseTime,
       created_at: new Date().toISOString()
     }
