@@ -4,6 +4,7 @@ const STORAGE_KEY = "yak-map-state-v1";
 const SAMPLE_OCR_TEXT = "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분";
 const MAX_VISIBLE_STORES = 20;
 const NEARBY_RADIUS_KM = 3;
+const KAKAO_PLACES_PAGE_SIZE = 15;
 const REMINDER_GRACE_MINUTES = 5;
 const UPCOMING_NOTICE_MINUTES = 30;
 
@@ -910,7 +911,7 @@ function renderPin(store) {
 function renderStore(store) {
   const label = store.type === "hospital" ? "병원" : store.type === "store" ? "상비약 편의점" : "약국";
   const statusLabel = storeStatusLabel(store);
-  const statusClass = store.open ? "general" : "closed";
+  const statusClass = statusLabel === "영업정보 없음" ? "warning" : store.open ? "general" : "closed";
   return `
     <article class="store-item">
       <div class="item-top">
@@ -1139,32 +1140,90 @@ async function renderLiveKakaoMap() {
   const center = new window.kakao.maps.LatLng(centerPosition.lat, centerPosition.lng);
   const map = new window.kakao.maps.Map(mapRoot, { center, level: 5 });
   mapRoot.closest(".map-panel")?.classList.add("has-live-map");
+  let activeStoreDetail = null;
+  const closeActiveStoreDetail = () => {
+    if (!activeStoreDetail) return;
+    activeStoreDetail.setMap(null);
+    activeStoreDetail = null;
+  };
   if (state.currentPosition) {
-    const currentMarker = new window.kakao.maps.Marker({
+    createKakaoMapMarker({
       map,
       position: new window.kakao.maps.LatLng(state.currentPosition.lat, state.currentPosition.lng),
+      type: "user",
       title: "내 위치"
     });
-    const currentInfo = new window.kakao.maps.InfoWindow({
-      content: `<div style="padding:6px 8px;font-size:12px;">내 위치</div>`
-    });
-    window.kakao.maps.event.addListener(currentMarker, "click", () => currentInfo.open(map, currentMarker));
   }
   places.forEach((place) => {
     if (!place.lat || !place.lng) return;
-    const marker = new window.kakao.maps.Marker({
+    const position = new window.kakao.maps.LatLng(place.lat, place.lng);
+    const marker = createKakaoMapMarker({
       map,
-      position: new window.kakao.maps.LatLng(place.lat, place.lng),
+      position,
+      type: place.type,
       title: place.name
     });
-    const info = new window.kakao.maps.InfoWindow({
-      content: `<div style="padding:6px 8px;font-size:12px;">${escapeHtml(place.name)}<br>${storeStatusLabel(place)} · ${escapeHtml(storeHoursLabel(place))}</div>`
+    const detailContent = createKakaoStoreDetail(place);
+    const detailOverlay = new window.kakao.maps.CustomOverlay({
+      position,
+      content: detailContent,
+      yAnchor: 1.18,
+      zIndex: 3
     });
-    window.kakao.maps.event.addListener(marker, "click", () => info.open(map, marker));
+    marker.addEventListener("click", () => {
+      if (activeStoreDetail === detailOverlay) {
+        closeActiveStoreDetail();
+        return;
+      }
+      closeActiveStoreDetail();
+      detailOverlay.setMap(map);
+      activeStoreDetail = detailOverlay;
+    });
+    detailContent.querySelector(".kakao-store-detail__close")?.addEventListener("click", () => {
+      if (activeStoreDetail === detailOverlay) closeActiveStoreDetail();
+    });
   });
   state.apiStatus.kakao = "connected";
   setMapStatus("");
   loadNearbyKakaoPlaces(map);
+}
+
+function createKakaoMapMarker({ map, position, type, title }) {
+  const marker = document.createElement("button");
+  marker.type = "button";
+  marker.className = `kakao-place-marker kakao-place-marker--${type}`;
+  const label = document.createElement("span");
+  label.textContent = kakaoMarkerLabel(type);
+  marker.append(label);
+  marker.setAttribute("aria-label", title);
+  marker.title = title;
+  new window.kakao.maps.CustomOverlay({
+    map,
+    position,
+    content: marker,
+    yAnchor: 1,
+    zIndex: 2
+  });
+  return marker;
+}
+
+function kakaoMarkerLabel(type) {
+  if (type === "user") return "내";
+  if (type === "hospital") return "병";
+  if (type === "store") return "24";
+  return "약";
+}
+
+function createKakaoStoreDetail(place) {
+  const detail = document.createElement("article");
+  detail.className = "kakao-store-detail";
+  detail.innerHTML = `
+    <button class="kakao-store-detail__close" type="button" aria-label="판매처 정보 닫기">&times;</button>
+    <strong>${escapeHtml(place.name)}</strong>
+    <p>${escapeHtml(storeStatusLabel(place))} · ${escapeHtml(storeHoursLabel(place))}</p>
+    <p>${escapeHtml(formatStoreDistance(place))} · ${escapeHtml(place.phone || "전화번호 없음")}</p>
+  `;
+  return detail;
 }
 
 async function loadNearbyKakaoPlaces(map) {
@@ -1177,7 +1236,10 @@ async function loadNearbyKakaoPlaces(map) {
   const results = await Promise.all(kakaoNearbyKeywords(state.mapFilter).map(({ keyword, type }) => {
     return searchKakaoKeyword(places, keyword, type, center);
   }));
-  const nearbyPlaces = dedupeStores(results.flat()).slice(0, MAX_VISIBLE_STORES);
+  const publicHours = await loadPublicStoreHoursForCurrentRegion(state.mapFilter);
+  const nearbyPlaces = dedupeStores(results.flat())
+    .map((store) => mergeKakaoStoreHours(store, publicHours))
+    .slice(0, MAX_VISIBLE_STORES);
   state.kakaoNearbySearchKey = searchKey;
   if (!nearbyPlaces.length) return;
 
@@ -1198,7 +1260,16 @@ function kakaoNearbyKeywords(filter) {
   ];
 }
 
-function searchKakaoKeyword(places, keyword, type, center) {
+async function searchKakaoKeyword(places, keyword, type, center) {
+  const firstPage = await searchKakaoKeywordPage(places, keyword, type, center, 1);
+  if (firstPage.length < KAKAO_PLACES_PAGE_SIZE || firstPage.length >= MAX_VISIBLE_STORES) {
+    return firstPage.slice(0, MAX_VISIBLE_STORES);
+  }
+  const secondPage = await searchKakaoKeywordPage(places, keyword, type, center, 2);
+  return [...firstPage, ...secondPage].slice(0, MAX_VISIBLE_STORES);
+}
+
+function searchKakaoKeywordPage(places, keyword, type, center, page) {
   return new Promise((resolve) => {
     places.keywordSearch(keyword, (data, status) => {
       if (status !== window.kakao.maps.services.Status.OK) {
@@ -1209,7 +1280,8 @@ function searchKakaoKeyword(places, keyword, type, center) {
     }, {
       location: center,
       radius: NEARBY_RADIUS_KM * 1000,
-      size: 15,
+      size: KAKAO_PLACES_PAGE_SIZE,
+      page,
       sort: window.kakao.maps.services.SortBy.DISTANCE
     });
   });
@@ -1223,13 +1295,82 @@ function normalizeKakaoPlace(place, type) {
     address: place.road_address_name || place.address_name || "",
     phone: place.phone || "",
     distance: place.distance ? Number(place.distance) / 1000 : null,
-    open: true,
+    open: false,
     statusLabel: "영업정보 없음",
     hours: "영업정보 없음",
     lat: Number(place.y),
     lng: Number(place.x),
     x: 50,
     y: 50
+  };
+}
+
+async function loadPublicStoreHoursForCurrentRegion(filter) {
+  const region = await resolveCurrentKakaoRegion();
+  if (!region) return state.mapPlaces.filter((store) => store.type !== "store");
+
+  const types = [...new Set(kakaoNearbyKeywords(filter).map((item) => item.type))]
+    .filter((type) => type === "pharmacy" || type === "hospital");
+  if (!types.length) return [];
+
+  const params = new URLSearchParams({
+    region1: region.region1,
+    region2: region.region2,
+    limit: "100"
+  });
+  try {
+    const responses = await Promise.all(types.map((type) => {
+      const endpoint = type === "pharmacy" ? "/api/pharmacies" : "/api/hospitals";
+      return apiGet(`${endpoint}?${params}`);
+    }));
+    return [...state.mapPlaces, ...responses.flatMap((response) => response.items || [])];
+  } catch {
+    return state.mapPlaces.filter((store) => store.type !== "store");
+  }
+}
+
+function resolveCurrentKakaoRegion() {
+  if (!state.currentPosition || !window.kakao?.maps?.services?.Geocoder) return Promise.resolve(null);
+  const geocoder = new window.kakao.maps.services.Geocoder();
+  return new Promise((resolve) => {
+    geocoder.coord2RegionCode(state.currentPosition.lng, state.currentPosition.lat, (regions, status) => {
+      if (status !== window.kakao.maps.services.Status.OK) {
+        resolve(null);
+        return;
+      }
+      const region = regions.find((item) => item.region_type === "H") || regions[0];
+      if (!region?.region_1depth_name || !region?.region_2depth_name) {
+        resolve(null);
+        return;
+      }
+      resolve({ region1: region.region_1depth_name, region2: region.region_2depth_name });
+    });
+  });
+}
+
+function mergeKakaoStoreHours(store, publicStores) {
+  if (store.type === "store") return store;
+  const storeName = normalize(store.name);
+  const storeAddress = normalize(store.address);
+  const matchingStore = publicStores.find((candidate) => {
+    if (candidate.type !== store.type) return false;
+    const candidateName = normalize(candidate.name);
+    const candidateAddress = normalize(candidate.address);
+    const exactName = candidateName === storeName;
+    const similarName = candidateName.length >= 3
+      && storeName.length >= 3
+      && (candidateName.includes(storeName) || storeName.includes(candidateName));
+    const matchingAddress = storeAddress && candidateAddress
+      && (candidateAddress.includes(storeAddress) || storeAddress.includes(candidateAddress));
+    return exactName || (similarName && matchingAddress);
+  });
+  if (!matchingStore) return store;
+  return {
+    ...store,
+    phone: store.phone || matchingStore.phone,
+    open: matchingStore.open,
+    statusLabel: matchingStore.statusLabel,
+    hours: matchingStore.hours
   };
 }
 
@@ -1315,8 +1456,8 @@ function bindViewEvents() {
     event.preventDefault();
     const query = document.querySelector("#medicineSearch").value;
     const candidates = findMedicineCandidates(query);
-    const medicine = await lookupMedicineRemote(query);
-    if (!medicine && candidates.length) {
+    const exactMedicine = lookupMedicine(query);
+    if (!exactMedicine && candidates.length) {
       state.medicineCandidates = candidates;
       state.selectedMedicine = null;
       persist();
@@ -1324,6 +1465,7 @@ function bindViewEvents() {
       toast("유사한 약 후보를 표시했습니다.");
       return;
     }
+    const medicine = await lookupMedicineRemote(query);
     if (!medicine) {
       state.medicineCandidates = [];
       toast("검색 결과 없음");
@@ -1538,7 +1680,7 @@ async function startOcrCamera() {
 }
 
 function mapApiSearchParams() {
-  const params = new URLSearchParams({ limit: "50" });
+  const params = new URLSearchParams({ limit: String(MAX_VISIBLE_STORES) });
   const region = parseRegionSearch(state.regionSearch);
   if (region.region1) params.set("region1", region.region1);
   if (region.region2) params.set("region2", region.region2);
