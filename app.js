@@ -910,8 +910,7 @@ function renderPin(store) {
 
 function renderStore(store) {
   const label = store.type === "hospital" ? "병원" : store.type === "store" ? "상비약 편의점" : "약국";
-  const statusLabel = storeStatusLabel(store);
-  const statusClass = statusLabel === "영업정보 없음" ? "warning" : store.open ? "general" : "closed";
+  const status = currentStoreStatus(store);
   return `
     <article class="store-item">
       <div class="item-top">
@@ -921,7 +920,7 @@ function renderStore(store) {
         </div>
         <div class="badge-stack">
           <span class="badge ${store.type === "hospital" ? "prescription" : "general"}">${label}</span>
-          <span class="badge ${statusClass}">${statusLabel}</span>
+          <span class="badge ${storeStatusClass(status)}" data-store-status-id="${escapeHtml(store.id)}">${status.label}</span>
         </div>
       </div>
       <p class="muted">${formatStoreDistance(store)} · ${storeHoursLabel(store)} · ${store.phone}</p>
@@ -934,13 +933,56 @@ function renderStore(store) {
 }
 
 function storeStatusLabel(store) {
-  if (store.statusLabel) return store.statusLabel;
-  if (!store.hours || store.hours === "영업정보 없음") return "영업정보 없음";
-  return store.open ? "영업 중" : "영업 종료";
+  return currentStoreStatus(store).label;
+}
+
+function storeStatusClass(status) {
+  if (status.label === "영업정보 없음") return "warning";
+  return status.open ? "general" : "closed";
+}
+
+function currentStoreStatus(store, now = new Date()) {
+  const statusFromHours = storeStatusFromHours(storeHoursLabel(store), now);
+  if (statusFromHours) return statusFromHours;
+  if (store.statusLabel) return { open: Boolean(store.open), label: store.statusLabel };
+  return { open: Boolean(store.open), label: store.open ? "영업 중" : "영업 종료" };
+}
+
+function storeStatusFromHours(hours, now = new Date()) {
+  if (!hours || hours === "영업정보 없음") {
+    return { open: false, label: "영업정보 없음" };
+  }
+  if (String(hours).includes("24시간")) {
+    return { open: true, label: "영업 중" };
+  }
+
+  const match = String(hours).match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+
+  const open = Number(match[1]) * 60 + Number(match[2]);
+  const close = Number(match[3]) * 60 + Number(match[4]);
+  const current = now.getHours() * 60 + now.getMinutes();
+  const isOpen = close < open
+    ? current >= open || current <= close
+    : current >= open && current <= close;
+
+  return { open: isOpen, label: isOpen ? "영업 중" : "영업 종료" };
 }
 
 function storeHoursLabel(store) {
   return store.hours || "영업정보 없음";
+}
+
+function refreshRenderedStoreStatuses() {
+  if (state.selectedTab !== "map") return;
+  const visible = visibleStoresForMap();
+  document.querySelectorAll("[data-store-status-id]").forEach((badge) => {
+    const store = visible.find((item) => String(item.id) === badge.dataset.storeStatusId);
+    if (!store) return;
+    const status = currentStoreStatus(store);
+    badge.textContent = status.label;
+    badge.className = `badge ${storeStatusClass(status)}`;
+  });
 }
 
 function visibleStoresForMap(holidayMode = isHolidayOrNight()) {
@@ -2571,6 +2613,7 @@ function checkDueReminders() {
       }
     });
   });
+  refreshRenderedStoreStatuses();
 }
 
 function dueReminderTimes(schedule, now = new Date()) {

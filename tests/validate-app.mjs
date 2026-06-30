@@ -107,6 +107,8 @@ const assertions = [
   ["app shows no nearby pharmacy results", contents["app.js"].includes("반경 3km 이내 판매처가 없습니다.")],
   ["app shows missing store hours as unknown", contents["app.js"].includes("영업정보 없음")],
   ["app does not mark stores with missing hours as open", contents["app.js"].includes('statusLabel: "영업정보 없음"') && contents["app.js"].includes("open: false")],
+  ["app recalculates store open status from visible hours at render time", contents["app.js"].includes("currentStoreStatus") && contents["app.js"].includes("storeStatusFromHours(storeHoursLabel(store), now)") && contents["app.js"].includes("String(hours).includes(\"24시간\")")],
+  ["app refreshes visible store status badges without remounting the map", contents["app.js"].includes("refreshRenderedStoreStatuses") && contents["app.js"].includes("data-store-status-id") && contents["app.js"].includes("badge.className = `badge ${storeStatusClass(status)}`")],
   ["app shows persistent location permission denial hint", contents["app.js"].includes("locationPermissionDenied") && contents["app.js"].includes("위치 권한을 허용해주세요")],
   ["app prioritizes convenience stores on holidays", contents["app.js"].includes("공휴일에는 상비약 판매 편의점을 우선 안내합니다.")],
   ["app supports editing schedule times", contents["app.js"].includes("data-edit-schedule")],
