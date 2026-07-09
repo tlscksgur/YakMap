@@ -1257,12 +1257,14 @@ function kakaoMarkerLabel(type) {
 }
 
 function createKakaoStoreDetail(place) {
+  const status = currentStoreStatus(place);
   const detail = document.createElement("article");
   detail.className = "kakao-store-detail";
   detail.innerHTML = `
     <button class="kakao-store-detail__close" type="button" aria-label="판매처 정보 닫기">&times;</button>
     <strong>${escapeHtml(place.name)}</strong>
-    <p>${escapeHtml(storeStatusLabel(place))} · ${escapeHtml(storeHoursLabel(place))}</p>
+    <p><span class="badge ${storeStatusClass(status)} kakao-store-detail__status">${escapeHtml(status.label)}</span> ${escapeHtml(storeHoursLabel(place))}</p>
+    <p class="kakao-store-detail__address">${escapeHtml(place.address || "주소 없음")}</p>
     <p>${escapeHtml(formatStoreDistance(place))} · ${escapeHtml(place.phone || "전화번호 없음")}</p>
   `;
   return detail;

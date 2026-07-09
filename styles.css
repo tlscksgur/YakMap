@@ -649,6 +649,18 @@ h1 {
   color: var(--muted);
 }
 
+.kakao-store-detail__status {
+  display: inline-flex;
+  margin-right: 4px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
+
+.kakao-store-detail__address {
+  color: var(--text);
+}
+
 .kakao-store-detail__close {
   position: absolute;
   top: 5px;

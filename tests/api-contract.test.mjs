@@ -139,6 +139,91 @@ assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스�
 assert.equal(livePharmacies.items.find((item) => item.name === "마감 테스트약국").statusLabel, "영업 종료");
 assert.equal(livePharmacies.items.find((item) => item.name === "24시간 테스트약국").distance, null);
 
+let businessHoursRequestUrl = null;
+globalThis.fetch = async (url) => {
+  const parsed = new URL(String(url));
+  if (parsed.hostname === "business-hours.test") {
+    businessHoursRequestUrl = parsed;
+    return {
+      ok: true,
+      json: async () => ({
+        hours: "09:00-18:30",
+        open: true,
+        statusLabel: "영업 중"
+      })
+    };
+  }
+  return {
+    ok: true,
+    text: async () => `
+      <response><body><items>
+        <item>
+          <hpid>A3</hpid><dutyName>영업시간보강약국</dutyName><dutyAddr>서울 중구 테스트로 1</dutyAddr><dutyTel1>02-3333-3333</dutyTel1>
+          <wgs84Lat>37.5667</wgs84Lat><wgs84Lon>126.9782</wgs84Lon>
+        </item>
+      </items></body></response>`
+  };
+};
+const enrichedHoursPharmacies = await listPharmacies(
+  { region1: "서울특별시", region2: "중구" },
+  getRuntimeConfig({
+    NMC_PHARMACY_SERVICE_KEY: "test-service-key",
+    BUSINESS_HOURS_API: "https://business-hours.test/lookup"
+  })
+);
+globalThis.fetch = originalFetch;
+const enrichedStore = enrichedHoursPharmacies.items.find((item) => item.name === "영업시간보강약국");
+assert.equal(businessHoursRequestUrl.searchParams.get("name"), "영업시간보강약국");
+assert.equal(businessHoursRequestUrl.searchParams.get("address"), "서울 중구 테스트로 1");
+assert.equal(enrichedStore.hours, "09:00-18:30");
+assert.equal(enrichedStore.open, true);
+assert.equal(enrichedStore.statusLabel, "영업 중");
+
+let googlePlacesRequestUrl = null;
+globalThis.fetch = async (url) => {
+  const parsed = new URL(String(url));
+  if (parsed.hostname === "maps.googleapis.com") {
+    googlePlacesRequestUrl = parsed;
+    return {
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            name: "구글영업시간약국",
+            opening_hours: { open_now: false }
+          }
+        ],
+        status: "OK"
+      })
+    };
+  }
+  return {
+    ok: true,
+    text: async () => `
+      <response><body><items>
+        <item>
+          <hpid>A4</hpid><dutyName>구글영업시간약국</dutyName><dutyAddr>서울 중구 테스트로 2</dutyAddr><dutyTel1>02-4444-4444</dutyTel1>
+          <wgs84Lat>37.5668</wgs84Lat><wgs84Lon>126.9783</wgs84Lon>
+        </item>
+      </items></body></response>`
+  };
+};
+const googleEnrichedPharmacies = await listPharmacies(
+  { region1: "서울특별시", region2: "중구" },
+  getRuntimeConfig({
+    NMC_PHARMACY_SERVICE_KEY: "test-service-key",
+    BUSINESS_HOURS_API: "google-places-test-key"
+  })
+);
+globalThis.fetch = originalFetch;
+const googleEnrichedStore = googleEnrichedPharmacies.items.find((item) => item.name === "구글영업시간약국");
+assert.equal(googlePlacesRequestUrl.pathname, "/maps/api/place/textsearch/json");
+assert.equal(googlePlacesRequestUrl.searchParams.get("key"), "google-places-test-key");
+assert.match(googlePlacesRequestUrl.searchParams.get("query"), /구글영업시간약국/);
+assert.equal(googleEnrichedStore.hours, "영업시간 확인됨");
+assert.equal(googleEnrichedStore.open, false);
+assert.equal(googleEnrichedStore.statusLabel, "영업 종료");
+
 const tokenResult = await registerFcmToken({ userId: "u1", token: "fcm_test" }, emptyConfig);
 assert.equal(tokenResult.source, "local");
 assert.equal(tokenResult.active, true);

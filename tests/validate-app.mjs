@@ -9,6 +9,7 @@ const requiredFiles = [
   "schema.sql",
   "README.md",
   "server.js",
+  ".env.example",
   "lib/api-providers.mjs"
 ];
 
@@ -38,6 +39,7 @@ const assertions = [
   ["app has Kakao SDK hook", contents["app.js"].includes("loadKakaoMapSdk")],
   ["app distinguishes current location and store marker types on Kakao map", contents["app.js"].includes("createKakaoMapMarker") && contents["app.js"].includes('type: "user"') && contents["app.js"].includes("kakaoMarkerLabel") && ["user", "pharmacy", "hospital", "store"].every((type) => contents["styles.css"].includes(`.kakao-place-marker--${type}`))],
   ["app lets users close Kakao store detail overlays", contents["app.js"].includes("closeActiveStoreDetail") && contents["app.js"].includes("activeStoreDetail === detailOverlay") && contents["app.js"].includes("kakao-store-detail__close")],
+  ["app shows status and address in Kakao marker details", contents["app.js"].includes("kakao-store-detail__status") && contents["app.js"].includes("kakao-store-detail__address") && contents["app.js"].includes('place.address || "주소 없음"')],
   ["app explains Kakao map local service setup", contents["app.js"].includes("카카오맵/로컬 서비스 활성화")],
   ["app hides fallback map pins when live Kakao map is configured", contents["app.js"].includes("shouldRenderFallbackPins")],
   ["app has OCR matching", contents["app.js"].includes("extractMedicines")],
@@ -98,6 +100,7 @@ const assertions = [
   ["app searches nearby real places with Kakao Places", contents["app.js"].includes("loadNearbyKakaoPlaces") && contents["app.js"].includes("keywordSearch") && contents["app.js"].includes("kakao.maps.services.Places")],
   ["app retrieves a second Kakao Places page to fill 20 results", contents["app.js"].includes("searchKakaoKeywordPage") && contents["app.js"].includes("searchKakaoKeywordPage(places, keyword, type, center, 2)")],
   ["app enriches nearby Kakao pharmacies with public operating hours", contents["app.js"].includes("loadPublicStoreHoursForCurrentRegion") && contents["app.js"].includes("mergeKakaoStoreHours") && contents["app.js"].includes("coord2RegionCode")],
+  ["providers can enrich missing store hours with BUSINESS_HOURS_API", contents["lib/api-providers.mjs"].includes("businessHoursApi: env.BUSINESS_HOURS_API") && contents["lib/api-providers.mjs"].includes("enrichStoresWithBusinessHours") && contents["lib/api-providers.mjs"].includes("buildGooglePlacesHoursUrl") && contents[".env.example"].includes("BUSINESS_HOURS_API=")],
   ["app searches nearby convenience stores with Kakao Places", contents["app.js"].includes("편의점") && contents["app.js"].includes("normalizeKakaoPlace")],
   ["app refresh invalidates Kakao nearby search cache", contents["app.js"].includes("resetNearbyKakaoSearch") && contents["app.js"].includes("state.kakaoNearbySearchKey = \"\"")],
   ["app supports region map search", contents["app.js"].includes("regionSearchInput")],
