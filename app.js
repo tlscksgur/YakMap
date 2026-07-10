@@ -1334,10 +1334,14 @@ function searchKakaoKeywordPage(places, keyword, type, center, page) {
 function normalizeKakaoPlace(place, type) {
   return {
     id: `kakao-${type}-${place.id}`,
+    kakaoPlaceId: place.id || "",
     type,
     name: place.place_name || (type === "store" ? "이름 미상 편의점" : "이름 미상 판매처"),
     address: place.road_address_name || place.address_name || "",
     phone: place.phone || "",
+    place_url: place.place_url || "",
+    category_group_code: place.category_group_code || "",
+    category_group_name: place.category_group_name || "",
     distance: place.distance ? Number(place.distance) / 1000 : null,
     open: false,
     statusLabel: "영업정보 없음",
@@ -1394,20 +1398,11 @@ function resolveCurrentKakaoRegion() {
 
 function mergeKakaoStoreHours(store, publicStores) {
   if (store.type === "store") return store;
-  const storeName = normalize(store.name);
-  const storeAddress = normalize(store.address);
-  const matchingStore = publicStores.find((candidate) => {
-    if (candidate.type !== store.type) return false;
-    const candidateName = normalize(candidate.name);
-    const candidateAddress = normalize(candidate.address);
-    const exactName = candidateName === storeName;
-    const similarName = candidateName.length >= 3
-      && storeName.length >= 3
-      && (candidateName.includes(storeName) || storeName.includes(candidateName));
-    const matchingAddress = storeAddress && candidateAddress
-      && (candidateAddress.includes(storeAddress) || storeAddress.includes(candidateAddress));
-    return exactName || (similarName && matchingAddress);
-  });
+  const matchingStore = publicStores
+    .filter((candidate) => candidate.type === store.type)
+    .map((candidate) => ({ candidate, score: kakaoPublicStoreMatchScore(store, candidate) }))
+    .filter(({ score }) => score >= 60)
+    .sort((a, b) => b.score - a.score)[0]?.candidate;
   if (!matchingStore) return store;
   return {
     ...store,
@@ -1416,6 +1411,59 @@ function mergeKakaoStoreHours(store, publicStores) {
     statusLabel: matchingStore.statusLabel,
     hours: matchingStore.hours
   };
+}
+
+function kakaoPublicStoreMatchScore(store, candidate) {
+  const storePhone = normalizePhone(store.phone);
+  const candidatePhone = normalizePhone(candidate.phone);
+  if (storePhone && candidatePhone && storePhone === candidatePhone) return 120;
+
+  const storeName = normalize(store.name);
+  const candidateName = normalize(candidate.name);
+  const storeAddress = normalize(store.address);
+  const candidateAddress = normalize(candidate.address);
+  let score = 0;
+
+  if (storeName && candidateName && storeName === candidateName) {
+    score += 55;
+  } else if (
+    candidateName.length >= 3
+    && storeName.length >= 3
+    && (candidateName.includes(storeName) || storeName.includes(candidateName))
+  ) {
+    score += 30;
+  }
+
+  if (storeAddress && candidateAddress && (candidateAddress.includes(storeAddress) || storeAddress.includes(candidateAddress))) {
+    score += 45;
+  } else {
+    score += Math.min(35, addressTokenScore(store.address, candidate.address) * 12);
+  }
+
+  return score;
+}
+
+function normalizePhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.startsWith("82")) return `0${digits.slice(2)}`;
+  return digits;
+}
+
+function addressTokenScore(left, right) {
+  const leftTokens = new Set(addressTokens(left));
+  const rightTokens = new Set(addressTokens(right));
+  let score = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) score += 1;
+  });
+  return score;
+}
+
+function addressTokens(value) {
+  return normalize(value)
+    .split(/\s+/)
+    .map((token) => token.replace(/[(),]/g, ""))
+    .filter((token) => token.length >= 2 && !/^\d+$/.test(token));
 }
 
 function dedupeStores(items) {
