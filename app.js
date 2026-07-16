@@ -3,8 +3,12 @@ import { getAuthErrorMessage } from "./lib/auth-errors.mjs";
 const STORAGE_KEY = "yak-map-state-v1";
 const SAMPLE_OCR_TEXT = "타이레놀정500mg\n아침, 저녁 식후 30분\n3일분";
 const MAX_VISIBLE_STORES = 20;
+const MAP_API_CANDIDATE_LIMIT = 100;
+const KAKAO_PLACE_CANDIDATE_LIMIT = 45;
+const KAKAO_PUBLIC_HOURS_LIMIT = 100;
 const NEARBY_RADIUS_KM = 3;
 const KAKAO_PLACES_PAGE_SIZE = 15;
+const KAKAO_PLACES_MAX_PAGES = 3;
 const REMINDER_GRACE_MINUTES = 5;
 const UPCOMING_NOTICE_MINUTES = 30;
 
@@ -115,6 +119,7 @@ const defaultState = {
   mapFilter: "pharmacy",
   mapPlaces: [],
   kakaoNearbySearchKey: "",
+  apiConfigSignature: "",
   regionSearch: "",
   storeSearch: "",
   editingScheduleId: null,
@@ -200,11 +205,24 @@ function persist() {
 async function loadRuntimeConfig() {
   try {
     runtimeConfig = await apiGet("/api/config");
+    invalidateMapCacheOnApiConfigChange();
     state.apiStatus.config = "connected";
   } catch {
     state.apiStatus.config = "fallback";
   }
   persist();
+}
+
+function invalidateMapCacheOnApiConfigChange() {
+  const signature = [
+    runtimeConfig.liveApisEnabled ? "live" : "sample",
+    runtimeConfig.integrations?.nmc?.configured ? "nmc" : "no-nmc",
+    runtimeConfig.integrations?.kakaoMap?.configured ? "kakao" : "no-kakao"
+  ].join(":");
+  if (state.apiConfigSignature === signature) return;
+  state.apiConfigSignature = signature;
+  state.mapPlaces = [];
+  resetNearbyKakaoSearch();
 }
 
 async function apiGet(path) {
@@ -993,7 +1011,14 @@ function visibleStoresForMap(holidayMode = isHolidayOrNight()) {
     if (state.mapFilter === "all") return true;
     return store.type === state.mapFilter;
   });
-  return filterStoresBySearch(filteredByType).slice(0, MAX_VISIBLE_STORES);
+  return filterOpenPharmacies(filterStoresBySearch(filteredByType)).slice(0, MAX_VISIBLE_STORES);
+}
+
+function filterOpenPharmacies(items) {
+  return items.filter((store) => {
+    if (store.type !== "pharmacy") return true;
+    return currentStoreStatus(store).open;
+  });
 }
 
 function fallbackToUnfilteredStores(sourceStores, nearbyStores) {
@@ -1282,8 +1307,7 @@ async function loadNearbyKakaoPlaces(map) {
   }));
   const publicHours = await loadPublicStoreHoursForCurrentRegion(state.mapFilter);
   const nearbyPlaces = dedupeStores(results.flat())
-    .map((store) => mergeKakaoStoreHours(store, publicHours))
-    .slice(0, MAX_VISIBLE_STORES);
+    .map((store) => mergeKakaoStoreHours(store, publicHours));
   state.kakaoNearbySearchKey = searchKey;
   if (!nearbyPlaces.length) return;
 
@@ -1305,12 +1329,15 @@ function kakaoNearbyKeywords(filter) {
 }
 
 async function searchKakaoKeyword(places, keyword, type, center) {
-  const firstPage = await searchKakaoKeywordPage(places, keyword, type, center, 1);
-  if (firstPage.length < KAKAO_PLACES_PAGE_SIZE || firstPage.length >= MAX_VISIBLE_STORES) {
-    return firstPage.slice(0, MAX_VISIBLE_STORES);
+  const results = [];
+  for (let page = 1; page <= KAKAO_PLACES_MAX_PAGES; page += 1) {
+    const pageResults = await searchKakaoKeywordPage(places, keyword, type, center, page);
+    results.push(...pageResults);
+    if (pageResults.length < KAKAO_PLACES_PAGE_SIZE || results.length >= KAKAO_PLACE_CANDIDATE_LIMIT) {
+      break;
+    }
   }
-  const secondPage = await searchKakaoKeywordPage(places, keyword, type, center, 2);
-  return [...firstPage, ...secondPage].slice(0, MAX_VISIBLE_STORES);
+  return results.slice(0, KAKAO_PLACE_CANDIDATE_LIMIT);
 }
 
 function searchKakaoKeywordPage(places, keyword, type, center, page) {
@@ -1364,7 +1391,7 @@ async function loadPublicStoreHoursForCurrentRegion(filter) {
   const params = new URLSearchParams({
     region1: region.region1,
     region2: region.region2,
-    limit: "100"
+    limit: String(KAKAO_PUBLIC_HOURS_LIMIT)
   });
   try {
     const responses = await Promise.all(types.map((type) => {
@@ -1422,10 +1449,11 @@ function kakaoPublicStoreMatchScore(store, candidate) {
   const candidateName = normalize(candidate.name);
   const storeAddress = normalize(store.address);
   const candidateAddress = normalize(candidate.address);
+  const addressMatches = addressTokenScore(store.address, candidate.address);
   let score = 0;
 
   if (storeName && candidateName && storeName === candidateName) {
-    score += 55;
+    score += 60;
   } else if (
     candidateName.length >= 3
     && storeName.length >= 3
@@ -1437,7 +1465,7 @@ function kakaoPublicStoreMatchScore(store, candidate) {
   if (storeAddress && candidateAddress && (candidateAddress.includes(storeAddress) || storeAddress.includes(candidateAddress))) {
     score += 45;
   } else {
-    score += Math.min(35, addressTokenScore(store.address, candidate.address) * 12);
+    score += Math.min(40, addressMatches * 12);
   }
 
   return score;
@@ -1772,7 +1800,7 @@ async function startOcrCamera() {
 }
 
 function mapApiSearchParams() {
-  const params = new URLSearchParams({ limit: String(MAX_VISIBLE_STORES) });
+  const params = new URLSearchParams({ limit: String(MAP_API_CANDIDATE_LIMIT) });
   const region = parseRegionSearch(state.regionSearch);
   if (region.region1) params.set("region1", region.region1);
   if (region.region2) params.set("region2", region.region2);
